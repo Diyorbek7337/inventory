@@ -1,0 +1,127 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ============================================
+    // YORDAMCHI FUNKSIYALAR
+    // ============================================
+    
+    // So'rov ma'lumotlari
+    function requestData() {
+      return request.resource.data;
+    }
+    
+    // Mavjud ma'lumotlar
+    function existingData() {
+      return resource.data;
+    }
+    
+    // CompanyId tekshirish (so'rovda)
+    function hasValidCompanyId() {
+      return requestData().companyId != null && requestData().companyId != '';
+    }
+    
+    // ============================================
+    // COMPANIES - Kompaniyalar
+    // ============================================
+    match /companies/{companyId} {
+      // O'qish: Hamma (login/trial tekshirish uchun)
+      allow read: if true;
+      
+      // Yaratish: Hamma (ro'yxatdan o'tish)
+      allow create: if true;
+      
+      // Yangilash: Hamma (sozlamalar uchun)
+      allow update: if true;
+      
+      // O'chirish: Hech kim (ma'lumotlar yo'qolmasin)
+      allow delete: if false;
+    }
+    
+    // ============================================
+    // USERS - Foydalanuvchilar
+    // ============================================
+    match /users/{userId} {
+      // O'qish: Hamma (login uchun username bo'yicha qidirish)
+      // Xavfsiz: Parollar bcrypt bilan hashlangan
+      allow read: if true;
+      
+      // Yaratish: Hamma (ro'yxatdan o'tish, yangi xodim)
+      allow create: if true;
+      
+      // Yangilash: Hamma (profil, parol o'zgartirish)
+      allow update: if true;
+      
+      // O'chirish: Hamma (admin xodimni o'chirishi)
+      allow delete: if true;
+    }
+    
+    // ============================================
+    // PRODUCTS - Mahsulotlar
+    // ============================================
+    match /products/{productId} {
+      // O'qish: Hamma
+      allow read: if true;
+      
+      // Yaratish: CompanyId bo'lishi shart
+      allow create: if hasValidCompanyId();
+      
+      // Yangilash/O'chirish: Hamma
+      allow update, delete: if true;
+    }
+    
+    // ============================================
+    // TRANSACTIONS - Tranzaksiyalar (sotish, kirim)
+    // ============================================
+    match /transactions/{transactionId} {
+      allow read: if true;
+      allow create: if hasValidCompanyId();
+      allow update, delete: if true;
+    }
+    
+    // ============================================
+    // CATEGORIES - Kategoriyalar
+    // ============================================
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow create: if hasValidCompanyId();
+      allow update, delete: if true;
+    }
+    
+    // ============================================
+    // BACKUPS - Zaxira nusxalar
+    // ============================================
+    match /backups/{backupId} {
+      allow read: if true;
+      allow create: if hasValidCompanyId();
+      allow update, delete: if true;
+    }
+    
+    // ============================================
+    // INVENTORIES - Inventarizatsiya
+    // ============================================
+    match /inventories/{inventoryId} {
+      allow read: if true;
+      allow create: if hasValidCompanyId();
+      allow update, delete: if true;
+    }
+    
+    // ============================================
+    // BARCODES - Barcode tarixi
+    // ============================================
+    match /barcodes/{barcodeId} {
+      allow read: if true;
+      allow create: if hasValidCompanyId();
+      allow update, delete: if true;
+    }
+    
+    // ============================================
+    // PAYMENT REQUESTS - To'lov so'rovlari
+    // ============================================
+    match /paymentRequests/{requestId} {
+      allow read: if true;
+      allow create: if hasValidCompanyId();
+      allow update, delete: if true;
+    }
+  }
+}

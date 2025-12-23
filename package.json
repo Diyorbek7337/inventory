@@ -1,0 +1,41 @@
+{
+  "name": "crm-saas",
+  "version": "2.0.0",
+  "description": "CRM Pro - Do'kon boshqaruv tizimi",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "lint": "eslint src --ext js,jsx"
+  },
+  "dependencies": {
+    "bcryptjs": "^2.4.3",
+    "firebase": "^10.7.1",
+    "html5-qrcode": "^2.3.8",
+    "lucide-react": "^0.303.0",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-toastify": "^9.1.3",
+    "recharts": "^2.10.3"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.43",
+    "@types/react-dom": "^18.2.17",
+    "@vitejs/plugin-react": "^4.2.1",
+    "autoprefixer": "^10.4.16",
+    "postcss": "^8.4.32",
+    "tailwindcss": "^3.4.0",
+    "vite": "^5.0.8"
+  },
+  "keywords": [
+    "crm",
+    "pos",
+    "inventory",
+    "sales",
+    "uzbekistan",
+    "dokon"
+  ],
+  "author": "CRM Pro Team",
+  "license": "MIT"
+}

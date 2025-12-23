@@ -1,0 +1,7 @@
+.asideHeight {
+    height: 100vh !important;
+}
+.productsList {
+    max-height: 50vh;
+    overflow-y: auto;
+}
