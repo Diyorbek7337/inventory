@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
-import { PackagePlus, Search, FolderPlus, Trash2, Camera, Scan, Eye, EyeOff, Calendar, Package, Hash, AlertTriangle } from 'lucide-react';
+import { PackagePlus, Search, FolderPlus, Trash2, Camera, Scan, Eye, EyeOff, Calendar, Package, Hash, AlertTriangle, ImagePlus } from 'lucide-react';
 import { collection, addDoc, updateDoc, doc, deleteDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-toastify';
 import BarcodeScanner from './BarcodeScanner';
+import VisionImport from './VisionImport';
 
 const Income = ({ products, categories, onAddProduct, onUpdateProduct, onAddTransaction, onAddCategory, onDeleteCategory, currentUser, isAdmin, companyData }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -31,6 +32,7 @@ const Income = ({ products, categories, onAddProduct, onUpdateProduct, onAddTran
   const [newCategory, setNewCategory] = useState('');
   const [saving, setSaving] = useState(false);
   const [newBarcode, setNewBarcode] = useState('');
+  const [showVisionImport, setShowVisionImport] = useState(false);
 
   // Barcode tarixini yuklash
   useEffect(() => {
@@ -163,6 +165,74 @@ const Income = ({ products, categories, onAddProduct, onUpdateProduct, onAddTran
       console.error('Xato:', error);
       toast.error('Xatolik yuz berdi!');
     }
+    setSaving(false);
+  };
+
+  // Vision Import: rasmdan o'qilgan mahsulotlarni qayta ishlash
+  const handleVisionImport = async (importedItems) => {
+    setShowVisionImport(false);
+
+    if (!checkProductLimit()) return;
+
+    setSaving(true);
+    let addedCount = 0;
+
+    try {
+      for (const item of importedItems) {
+        // Mavjud mahsulotlardan qidirish (nom bo'yicha)
+        const existing = products.find(
+          p => p.name.trim().toLowerCase() === item.name.trim().toLowerCase()
+        );
+
+        if (existing) {
+          // Mavjud mahsulot — savatga qo'shish (belgilangan miqdorda)
+          const qty = parseInt(item.quantity) || 1;
+          setSelectedItems(prev => {
+            const found = prev.find(s => s.id === existing.id);
+            if (found) {
+              return prev.map(s =>
+                s.id === existing.id ? { ...s, quantity: s.quantity + qty } : s
+              );
+            }
+            return [...prev, { ...existing, quantity: qty }];
+          });
+          addedCount++;
+        } else {
+          // Yangi mahsulot — Firestore ga saqlash
+          const productData = {
+            name: item.name.trim(),
+            category: item.category || 'Umumiy',
+            costPrice: parseFloat(item.costPrice) || 0,
+            sellingPrice: parseFloat(item.sellingPrice),
+            price: parseFloat(item.sellingPrice),
+            barcode: item.barcode || '',
+            additionalBarcodes: [],
+            quantity: 0,
+            packSize: parseInt(item.packSize) || 1,
+            unit: item.unit || 'dona',
+            expirationDate: item.expirationDate || null,
+            color: item.color || '',
+            minStock: parseInt(item.minStock) || 5,
+            companyId: currentUser.companyId,
+            createdAt: new Date(),
+          };
+
+          const docRef = await addDoc(collection(db, 'products'), productData);
+          const newProd = { id: docRef.id, ...productData };
+          onAddProduct(newProd);
+
+          const qty = parseInt(item.quantity) || 1;
+          setSelectedItems(prev => [...prev, { ...newProd, quantity: qty }]);
+          addedCount++;
+        }
+      }
+
+      toast.success(`${addedCount} ta mahsulot savatga qo'shildi!`);
+    } catch (err) {
+      console.error('Vision import xato:', err);
+      toast.error('Xatolik yuz berdi!');
+    }
+
     setSaving(false);
   };
 
@@ -332,6 +402,14 @@ const Income = ({ products, categories, onAddProduct, onUpdateProduct, onAddTran
           >
             <PackagePlus className="w-5 h-5" />
             <span className="hidden sm:inline">Mahsulot</span>
+          </button>
+          <button
+            onClick={() => setShowVisionImport(true)}
+            className="flex items-center gap-2 px-4 py-2 text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 active:scale-95 transition-all"
+            title="Rasm/kamera orqali mahsulot kiritish (OCR)"
+          >
+            <ImagePlus className="w-5 h-5" />
+            <span className="hidden sm:inline">Rasm orqali</span>
           </button>
         </div>
       </div>
@@ -703,6 +781,15 @@ const Income = ({ products, categories, onAddProduct, onUpdateProduct, onAddTran
 
       {showScanner && (
         <BarcodeScanner onScan={handleBarcodeScan} onClose={() => setShowScanner(false)} />
+      )}
+
+      {showVisionImport && (
+        <VisionImport
+          onClose={() => setShowVisionImport(false)}
+          onImport={handleVisionImport}
+          categories={categories}
+          isAdmin={isAdmin}
+        />
       )}
     </div>
   );
