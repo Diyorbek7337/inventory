@@ -1,8 +1,13 @@
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs, query, where, doc, getDoc } from 'firebase/firestore';
-import { db } from './firebase';
+import { collection, getDocs, query, where, doc, getDoc, onSnapshot } from 'firebase/firestore';
+import { onAuthStateChanged } from 'firebase/auth';
+import { db, auth } from './firebase';
 import { ToastContainer, toast } from 'react-toastify';
 import 'react-toastify/dist/ReactToastify.css';
+import { ThemeProvider } from './ThemeContext';
+
+// Public catalog (no auth required)
+import PublicCatalog from './components/PublicCatalog';
 
 // Komponentlar
 import Login from './components/Login';
@@ -19,13 +24,16 @@ import Debtors from './components/Debtors';
 import SlowMovingProducts from './components/SlowMovingProducts';
 import Inventory from './components/Inventory';
 import Backup from './components/Backup';
+import Marketing from './components/Marketing';
+import Settings from './components/Settings';
+import Orders from './components/Orders';
 import SuperAdminLogin from './components/SuperAdminLogin';
 import SuperAdminDashboard from './components/SuperAdminDashboard';
 
 // Services
 import AuthService from './utils/authService';
 
-function App() {
+function AppInner() {
   const [currentUser, setCurrentUser] = useState(null);
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [showSuperAdmin, setShowSuperAdmin] = useState(false);
@@ -33,6 +41,10 @@ function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [bannerDismissed, setBannerDismissed] = useState(() => {
+    const saved = localStorage.getItem('bannerDismissedUntil');
+    return saved ? new Date() < new Date(saved) : false;
+  });
 
   // Ma'lumotlar
   const [products, setProducts] = useState([]);
@@ -75,21 +87,37 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  // Session boshqaruvi
+  // Firebase Auth — session boshqaruvi
+  // onAuthStateChanged: sahifa yangilanganda, boshqa tabda ham sessiya saqlanadi
   useEffect(() => {
-    const savedUser = localStorage.getItem('currentUser');
-    const loginTime = localStorage.getItem('loginTime');
-
-    if (savedUser && loginTime) {
-      const elapsed = Date.now() - parseInt(loginTime);
-      if (elapsed < SESSION_TIMEOUT) {
-        setCurrentUser(JSON.parse(savedUser));
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          const userSnap = await getDoc(doc(db, 'users', firebaseUser.uid));
+          if (userSnap.exists()) {
+            const userData = userSnap.data();
+            // Bloklangan yoki o'chirilgan foydalanuvchi
+            if (userData.isDeleted || !userData.isActive) {
+              await AuthService.logout();
+              setCurrentUser(null);
+            } else {
+              setCurrentUser({ id: firebaseUser.uid, ...userData });
+            }
+          } else {
+            // Firestore da hujjat yo'q (registratsiya jarayonida bo'lishi mumkin)
+            // logout() chaqirmaymiz — faqat currentUser ni tozalaymiz
+            setCurrentUser(null);
+          }
+        } catch {
+          setCurrentUser(null);
+        }
       } else {
-        localStorage.removeItem('currentUser');
-        localStorage.removeItem('loginTime');
+        setCurrentUser(null);
       }
-    }
-    setLoading(false);
+      setLoading(false);
+    });
+
+    return () => unsubscribe();
   }, []);
 
   // Faollik kuzatish
@@ -120,9 +148,29 @@ function App() {
   useEffect(() => {
     if (currentUser?.companyId) {
       loadData();
-      loadCompanyData();
     }
   }, [currentUser]);
+
+  // Kompaniya ma'lumotlarini real-time listener bilan yuklash
+  useEffect(() => {
+    if (!currentUser?.companyId) return;
+
+    const unsub = onSnapshot(
+      doc(db, 'companies', currentUser.companyId),
+      (snap) => {
+        if (snap.exists()) {
+          const data = { id: snap.id, ...snap.data() };
+          setCompanyData(data);
+          // Agar obuna yangilangan bo'lsa bannerni avtomatik yashirish
+          setBannerDismissed(false);
+          localStorage.removeItem('bannerDismissedUntil');
+        }
+      },
+      (error) => console.error('Kompaniya ma\'lumotlari yuklanmadi:', error)
+    );
+
+    return () => unsub();
+  }, [currentUser?.companyId]);
 
   const loadCompanyData = async () => {
     try {
@@ -174,13 +222,16 @@ function App() {
   };
 
   const handleLogin = (userData) => {
+    // onAuthStateChanged setCurrentUser ni o'zi chaqiradi,
+    // lekin activeMenu ni bu yerda belgilaymiz (tezroq UI o'tishi uchun)
     setCurrentUser(userData);
-    localStorage.setItem('currentUser', JSON.stringify(userData));
-    localStorage.setItem('loginTime', Date.now().toString());
+    const userRole = userData?.role || 'sotuvchi';
+    if (userRole === 'sotuvchi') setActiveMenu('outcome');
+    else setActiveMenu('dashboard');
   };
 
   const handleLogout = async () => {
-    await AuthService.logout();
+    await AuthService.logout(); // Firebase signOut + localStorage tozalash
     setCurrentUser(null);
     setProducts([]);
     setTransactions([]);
@@ -206,23 +257,28 @@ function App() {
   // Trial yoki obuna muddati tugaganmi?
   const isSubscriptionExpired = () => {
     if (!companyData) return false;
-    
+
+    // Faol emas deb belgilangan kompaniyalar
+    if (companyData.isActive === false) return true;
+
     // Trial tekshirish
-    if (companyData.plan === 'trial' && companyData.trialEndsAt) {
-      const endDate = companyData.trialEndsAt.seconds 
-        ? new Date(companyData.trialEndsAt.seconds * 1000) 
+    if (companyData.plan === 'trial') {
+      if (!companyData.trialEndsAt) return false;
+      const endDate = companyData.trialEndsAt.seconds
+        ? new Date(companyData.trialEndsAt.seconds * 1000)
         : new Date(companyData.trialEndsAt);
       return new Date() > endDate;
     }
-    
-    // Obuna tekshirish
+
+    // To'langan tarif — faqat subscriptionEnd aniq belgilangan va o'tib ketgan bo'lsa
     if (companyData.subscriptionEnd) {
-      const endDate = companyData.subscriptionEnd.seconds 
-        ? new Date(companyData.subscriptionEnd.seconds * 1000) 
+      const endDate = companyData.subscriptionEnd.seconds
+        ? new Date(companyData.subscriptionEnd.seconds * 1000)
         : new Date(companyData.subscriptionEnd);
       return new Date() > endDate;
     }
-    
+
+    // subscriptionEnd yo'q = admin hali belgilamagan yoki cheksiz → expired emas
     return false;
   };
 
@@ -284,15 +340,20 @@ function App() {
     setCategories(prev => prev.filter(c => c.id !== categoryId));
   };
 
-  const isAdmin = currentUser?.role === 'admin';
+  const role      = currentUser?.role || 'sotuvchi';
+  const isAdmin   = role === 'admin';
+  const isMenejer = role === 'menejer';
+  const isKassir  = role === 'kassir';
+  // Menejer ham ko'p bo'limlarni ko'ra oladi (tannarxdan tashqari)
+  const isManager = isAdmin || isMenejer;
 
   // Loading
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-100 flex items-center justify-center">
+      <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex items-center justify-center">
         <div className="text-center">
           <div className="w-16 h-16 mx-auto mb-4 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"></div>
-          <p className="text-slate-600">Yuklanmoqda...</p>
+          <p className="text-slate-600 dark:text-slate-400">Yuklanmoqda...</p>
         </div>
       </div>
     );
@@ -351,19 +412,66 @@ function App() {
 
   // Main App
   const renderContent = () => {
+    // Kassir: outcome, sales, debtors
+    if (isKassir) {
+      if (activeMenu === 'sales') {
+        return (
+          <Sales
+            transactions={transactions}
+            isAdmin={isAdmin}
+            companyData={companyData}
+          />
+        );
+      }
+      if (activeMenu === 'debtors') {
+        return (
+          <Debtors
+            transactions={transactions}
+            onUpdateTransaction={handleUpdateTransaction}
+            currentUser={currentUser}
+          />
+        );
+      }
+      // Default: outcome
+      return (
+        <Outcome
+          products={products}
+          onUpdateProduct={handleUpdateProduct}
+          onAddTransaction={handleAddTransaction}
+          currentUser={currentUser}
+          isAdmin={isAdmin}
+          companyData={companyData}
+        />
+      );
+    }
+
+    // Sotuvchi faqat outcome ko'radi
+    if (!isManager && !isKassir && activeMenu !== 'outcome') {
+      return (
+        <Outcome
+          products={products}
+          onUpdateProduct={handleUpdateProduct}
+          onAddTransaction={handleAddTransaction}
+          currentUser={currentUser}
+          isAdmin={isAdmin}
+          companyData={companyData}
+        />
+      );
+    }
+
     switch (activeMenu) {
       case 'dashboard':
         return (
-          <Dashboard 
-            products={products} 
+          <Dashboard
+            products={products}
             transactions={transactions}
             isAdmin={isAdmin}
             companyData={companyData}
           />
         );
       case 'income':
-        return (
-          <Income 
+        return isManager ? (
+          <Income
             products={products}
             categories={categories}
             onAddProduct={handleAddProduct}
@@ -375,54 +483,59 @@ function App() {
             isAdmin={isAdmin}
             companyData={companyData}
           />
-        );
+        ) : null;
       case 'outcome':
         return (
-          <Outcome 
+          <Outcome
             products={products}
             onUpdateProduct={handleUpdateProduct}
             onAddTransaction={handleAddTransaction}
             currentUser={currentUser}
             isAdmin={isAdmin}
+            companyData={companyData}
           />
         );
       case 'products':
-        return (
-          <ProductList 
+        return isManager ? (
+          <ProductList
             products={products}
             categories={categories}
             onUpdateProduct={handleUpdateProduct}
             onDeleteProduct={handleDeleteProduct}
             isAdmin={isAdmin}
           />
-        );
+        ) : null;
       case 'sales':
-        return (
-          <Sales 
+        return isManager ? (
+          <Sales
             transactions={transactions}
             isAdmin={isAdmin}
             companyData={companyData}
           />
-        );
+        ) : null;
       case 'debtors':
-        return (
-          <Debtors 
+        return isManager ? (
+          <Debtors
             transactions={transactions}
             onUpdateTransaction={handleUpdateTransaction}
             currentUser={currentUser}
           />
-        );
+        ) : null;
+      case 'marketing':
+        return isManager ? (
+          <Marketing currentUser={currentUser} />
+        ) : null;
       case 'statistics':
-        return (
-          <Statistics 
+        return isManager ? (
+          <Statistics
             products={products}
             transactions={transactions}
             isAdmin={isAdmin}
           />
-        );
+        ) : null;
       case 'inventory':
         return isAdmin ? (
-          <SlowMovingProducts 
+          <SlowMovingProducts
             products={products}
             transactions={transactions}
             isAdmin={isAdmin}
@@ -430,7 +543,7 @@ function App() {
         ) : null;
       case 'stockcount':
         return isAdmin ? (
-          <Inventory 
+          <Inventory
             products={products}
             onUpdateProduct={handleUpdateProduct}
             currentUser={currentUser}
@@ -438,7 +551,7 @@ function App() {
         ) : null;
       case 'backup':
         return isAdmin ? (
-          <Backup 
+          <Backup
             currentUser={currentUser}
             products={products}
             transactions={transactions}
@@ -446,29 +559,36 @@ function App() {
         ) : null;
       case 'users':
         return isAdmin ? (
-          <Users 
+          <Users
             currentUser={currentUser}
             companyData={companyData}
           />
+        ) : null;
+      case 'orders':
+        return isManager ? (
+          <Orders currentUser={currentUser} />
         ) : null;
       case 'settings':
         return isAdmin ? (
-          <CompanySettings 
+          <Settings
             currentUser={currentUser}
             companyData={companyData}
             onPlanChange={handlePlanChange}
+            onUserUpdate={(updates) => setCurrentUser(prev => ({ ...prev, ...updates }))}
           />
         ) : null;
       default:
-        return <Dashboard products={products} transactions={transactions} isAdmin={isAdmin} />;
+        return (
+          <Dashboard products={products} transactions={transactions} isAdmin={isAdmin} />
+        );
     }
   };
 
   return (
-    <div className="min-h-screen bg-slate-100 flex">
-      <ToastContainer 
-        position="top-center" 
-        autoClose={3000} 
+    <div className="min-h-screen bg-slate-100 dark:bg-slate-900 flex">
+      <ToastContainer
+        position="top-center"
+        autoClose={3000}
         theme="colored"
         toastClassName="rounded-xl"
       />
@@ -481,17 +601,38 @@ function App() {
       )}
 
       {/* Subscription Expired Banner */}
-      {isSubscriptionExpired() && isOnline && (
-        <div className="fixed top-0 left-0 right-0 bg-rose-500 text-white text-center py-3 z-50">
-          <div className="flex items-center justify-center gap-2">
-            <span className="font-semibold">
-              ⚠️ {companyData?.plan === 'trial' ? 'Sinov muddati tugadi!' : 'Obuna muddati tugadi!'} 
+      {isSubscriptionExpired() && isOnline && !bannerDismissed && (
+        <div className="fixed top-0 left-0 right-0 bg-rose-500 text-white text-center py-2.5 z-50">
+          <div className="flex items-center justify-center gap-2 flex-wrap px-4">
+            <span className="font-semibold text-sm">
+              ⚠️ {companyData?.plan === 'trial' ? 'Sinov muddati tugadi!' : 'Obuna muddati tugadi!'}
             </span>
             <button
               onClick={() => setActiveMenu('settings')}
               className="px-3 py-1 bg-white text-rose-600 rounded-lg font-semibold text-sm hover:bg-rose-50"
             >
               Tarifni yangilash
+            </button>
+            <button
+              onClick={async () => {
+                await loadCompanyData();
+                toast.info('Obuna ma\'lumotlari yangilandi');
+              }}
+              className="px-3 py-1 bg-rose-400 text-white rounded-lg font-semibold text-sm hover:bg-rose-300"
+            >
+              🔄 Yangilash
+            </button>
+            <button
+              onClick={() => {
+                setBannerDismissed(true);
+                // 24 soat yashirish
+                const until = new Date(Date.now() + 24 * 60 * 60 * 1000);
+                localStorage.setItem('bannerDismissedUntil', until.toISOString());
+              }}
+              className="px-3 py-1 bg-rose-700 text-white rounded-lg font-semibold text-sm hover:bg-rose-600"
+              title="Bannerni yashirish"
+            >
+              ✕ Yashirish
             </button>
           </div>
         </div>
@@ -506,10 +647,29 @@ function App() {
         setIsOpen={setSidebarOpen}
       />
 
-      <main className={`flex-1 min-h-screen lg:ml-0 overflow-y-auto ${!isOnline ? 'pt-10' : ''}`}>
+      <main className={`flex-1 min-h-screen lg:ml-0 overflow-y-auto bg-slate-50 dark:bg-slate-900 ${!isOnline ? 'pt-10' : ''}`}>
         {renderContent()}
       </main>
     </div>
+  );
+}
+
+// ─── Public shop routing (/shop/:slug) ───────────────────────────────────────
+function getPublicSlug() {
+  const path = window.location.pathname;
+  const match = path.match(/^\/shop\/([^/]+)/);
+  return match ? match[1] : null;
+}
+
+function App() {
+  const slug = getPublicSlug();
+  if (slug) {
+    return <PublicCatalog slug={slug} />;
+  }
+  return (
+    <ThemeProvider>
+      <AppInner />
+    </ThemeProvider>
   );
 }
 

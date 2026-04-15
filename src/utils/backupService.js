@@ -221,52 +221,95 @@ class BackupService {
    */
   async restoreFromBackup(backup, companyId, options = {}) {
     try {
-      const batch = writeBatch(db);
-      let restored = { products: 0, categories: 0 };
+      let restored = { products: 0, categories: 0, transactions: 0 };
 
-      // Kategoriyalarni restore qilish
-      if (options.categories && backup.data.categories) {
-        for (const cat of backup.data.categories) {
-          const newCat = {
+      // Firestore batch 500 ta limit — katta datasetlar uchun bo'laklarga bo'lamiz
+      const batchWrite = async (items, buildDoc) => {
+        const CHUNK = 400;
+        for (let i = 0; i < items.length; i += CHUNK) {
+          const batch = writeBatch(db);
+          items.slice(i, i + CHUNK).forEach(item => {
+            const ref = doc(collection(db, buildDoc.collection));
+            batch.set(ref, buildDoc.build(item));
+          });
+          await batch.commit();
+        }
+      };
+
+      // Kategoriyalar
+      if (options.categories && backup.data.categories?.length) {
+        await batchWrite(backup.data.categories, {
+          collection: 'categories',
+          build: cat => ({
             name: cat.name,
-            companyId: companyId,
+            companyId,
             restoredAt: new Date(),
             originalId: cat.id
-          };
-          const catRef = doc(collection(db, 'categories'));
-          batch.set(catRef, newCat);
-          restored.categories++;
-        }
+          })
+        });
+        restored.categories = backup.data.categories.length;
       }
 
-      // Mahsulotlarni restore qilish
-      if (options.products && backup.data.products) {
-        for (const product of backup.data.products) {
-          const newProduct = {
-            name: product.name,
-            barcode: product.barcode,
-            category: product.category,
-            costPrice: product.costPrice || 0,
-            sellingPrice: product.sellingPrice || 0,
-            quantity: product.quantity || 0,
-            unit: product.unit || 'dona',
-            companyId: companyId,
+      // Mahsulotlar
+      if (options.products && backup.data.products?.length) {
+        await batchWrite(backup.data.products, {
+          collection: 'products',
+          build: p => ({
+            name: p.name,
+            barcode: p.barcode || '',
+            additionalBarcodes: p.additionalBarcodes || [],
+            category: p.category || '',
+            costPrice: p.costPrice || 0,
+            sellingPrice: p.sellingPrice || p.price || 0,
+            price: p.price || p.sellingPrice || 0,
+            quantity: p.quantity || 0,
+            unit: p.unit || 'dona',
+            packSize: p.packSize || 1,
+            hasSizes: p.hasSizes || false,
+            sizes: p.sizes || null,
+            imageUrl: p.imageUrl || '',
+            companyId,
             restoredAt: new Date(),
-            originalId: product.id
-          };
-          const productRef = doc(collection(db, 'products'));
-          batch.set(productRef, newProduct);
-          restored.products++;
-        }
+            originalId: p.id
+          })
+        });
+        restored.products = backup.data.products.length;
       }
 
-      await batch.commit();
+      // Tranzaksiyalar
+      if (options.transactions && backup.data.transactions?.length) {
+        await batchWrite(backup.data.transactions, {
+          collection: 'transactions',
+          build: t => ({
+            saleId: t.saleId || '',
+            productId: t.productId || t.originalId || '',
+            productName: t.productName || '',
+            type: t.type || 'chiqim',
+            quantity: t.quantity || 0,
+            costPrice: t.costPrice || 0,
+            sellingPrice: t.sellingPrice || t.price || 0,
+            price: t.price || t.sellingPrice || 0,
+            totalAmount: t.totalAmount || 0,
+            paidAmount: t.paidAmount || 0,
+            debt: t.debt || 0,
+            customerName: t.customerName || '',
+            customerPhone: t.customerPhone || '',
+            paymentType: t.paymentType || 'naqd',
+            discount: t.discount || 0,
+            date: t.date ? new Date(t.date) : new Date(),
+            companyId,
+            restoredAt: new Date(),
+            originalId: t.id
+          })
+        });
+        restored.transactions = backup.data.transactions.length;
+      }
 
       return { success: true, restored };
 
     } catch (error) {
       console.error('Restore error:', error);
-      return { success: false, error: 'Restore qilishda xatolik!' };
+      return { success: false, error: 'Restore qilishda xatolik: ' + error.message };
     }
   }
 

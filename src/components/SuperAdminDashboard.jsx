@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from 'react';
 import { 
-  Building2, Users, Package, DollarSign, TrendingUp, 
+  Building2, Users, Package, DollarSign, TrendingUp,
   Crown, Search, Filter, RefreshCw, Eye, Ban, Check,
   ChevronDown, BarChart3, PieChart, AlertTriangle, Clock,
   ArrowLeft, Settings, Zap, Star, Shield, Calendar, X,
-  CreditCard, CheckCircle, XCircle, Send
+  CreditCard, CheckCircle, XCircle, Send, Trash2
 } from 'lucide-react';
 import { collection, getDocs, updateDoc, doc, query, where, deleteDoc } from 'firebase/firestore';
-import { db } from '../firebase';
+import { signOut } from 'firebase/auth';
+import { db, auth } from '../firebase';
 import { toast } from 'react-toastify';
 
 const SuperAdminDashboard = ({ onBack }) => {
@@ -35,10 +36,11 @@ const SuperAdminDashboard = ({ onBack }) => {
   };
 
   const durations = [
-    { months: 1, label: '1 oy' },
-    { months: 3, label: '3 oy' },
-    { months: 6, label: '6 oy' },
-    { months: 12, label: '1 yil' }
+    { months: 1,  label: '1 oy'  },
+    { months: 3,  label: '3 oy'  },
+    { months: 6,  label: '6 oy'  },
+    { months: 9,  label: '9 oy'  },
+    { months: 12, label: '1 yil' },
   ];
 
   useEffect(() => {
@@ -235,6 +237,58 @@ const SuperAdminDashboard = ({ onBack }) => {
     }
   };
 
+  // Kompaniyani to'liq o'chirish (cascade — barcha bog'liq ma'lumotlar bilan)
+  const deleteCompany = async (company) => {
+    const stats = getCompanyStats(company.id);
+    const confirmMsg = `"${company.name}" kompaniyasini O'CHIRMOQCHISIZ!\n\nO'chiriladigan ma'lumotlar:\n• ${stats.users} foydalanuvchi\n• ${stats.products} mahsulot\n• ${stats.transactions} tranzaksiya\n\nBu amalni QAYTARIB BO'LMAYDI!\n\nDavom etasizmi?`;
+
+    if (!window.confirm(confirmMsg)) return;
+
+    const loadingToast = toast.loading(`"${company.name}" o'chirilmoqda...`);
+
+    try {
+      const cid = company.id;
+      const collectionsToDelete = [
+        'users', 'products', 'transactions', 'categories',
+        'backups', 'inventories', 'barcodes', 'paymentRequests',
+        'draftSales', 'shops', 'orders',
+      ];
+
+      // Barcha bog'liq kolleksiyalardan hujjatlarni o'chirish
+      for (const colName of collectionsToDelete) {
+        const q = query(collection(db, colName), where('companyId', '==', cid));
+        const snap = await getDocs(q);
+        await Promise.all(snap.docs.map(d => deleteDoc(d.ref)));
+      }
+
+      // onlineStores — companyId document ID sifatida
+      try {
+        await deleteDoc(doc(db, 'onlineStores', cid));
+      } catch (_) {}
+
+      // Kompaniya hujjatining o'zi
+      await deleteDoc(doc(db, 'companies', cid));
+
+      // State dan olib tashlash
+      setCompanies(prev => prev.filter(c => c.id !== cid));
+      setAllUsers(prev => prev.filter(u => u.companyId !== cid));
+      setAllProducts(prev => prev.filter(p => p.companyId !== cid));
+      setAllTransactions(prev => prev.filter(t => t.companyId !== cid));
+      setPaymentRequests(prev => prev.filter(r => r.companyId !== cid));
+
+      toast.update(loadingToast, {
+        render: `✅ "${company.name}" va barcha ma'lumotlari o'chirildi!`,
+        type: 'success', isLoading: false, autoClose: 3000
+      });
+    } catch (error) {
+      console.error('O\'chirishda xato:', error);
+      toast.update(loadingToast, {
+        render: `❌ Xatolik: ${error.message}`,
+        type: 'error', isLoading: false, autoClose: 4000
+      });
+    }
+  };
+
   // Filtrlangan kompaniyalar
   const filteredCompanies = companies.filter(c => {
     const matchesSearch = !searchTerm || 
@@ -304,7 +358,10 @@ const SuperAdminDashboard = ({ onBack }) => {
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-4">
             <button
-              onClick={onBack}
+              onClick={async () => {
+                try { await signOut(auth); } catch (_) {}
+                onBack();
+              }}
               className="p-2 hover:bg-slate-700 rounded-lg transition-colors"
             >
               <ArrowLeft className="w-5 h-5 text-slate-400" />
@@ -662,6 +719,14 @@ const SuperAdminDashboard = ({ onBack }) => {
                           title={isBlocked ? 'Aktivlashtirish' : 'Bloklash'}
                         >
                           {isBlocked ? <Check className="w-5 h-5" /> : <Ban className="w-5 h-5" />}
+                        </button>
+
+                        <button
+                          onClick={() => deleteCompany(company)}
+                          className="p-2 rounded-lg bg-slate-700 text-slate-400 hover:bg-rose-500/20 hover:text-rose-400 transition-colors"
+                          title="O'chirish"
+                        >
+                          <Trash2 className="w-5 h-5" />
                         </button>
                       </div>
                     </div>

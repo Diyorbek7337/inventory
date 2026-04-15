@@ -1,0 +1,10 @@
+.borderS {
+  -webkit-box-shadow: 0px 10px 37px 7px rgba(34, 60, 80, 0.2);
+-moz-box-shadow: 0px 10px 37px 7px rgba(34, 60, 80, 0.2);
+box-shadow: 0px 10px 37px 7px rgba(34, 60, 80, 0.2);
+}
+.borderSD {
+    -webkit-box-shadow: 0px 10px 37px 7px rgba(34, 60, 80, 0.2);
+-moz-box-shadow: 0px 10px 37px 7px rgba(34, 60, 80, 0.2);
+box-shadow: 0px 10px 37px 7px rgba(34, 60, 80, 0.2);
+}

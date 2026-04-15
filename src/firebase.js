@@ -1,20 +1,29 @@
 import { initializeApp } from 'firebase/app';
 import { getFirestore } from 'firebase/firestore';
+import { getStorage } from 'firebase/storage';
+import { getAuth } from 'firebase/auth';
 
-// O'zingizning Firebase config ma'lumotlaringizni qo'ying
 const firebaseConfig = {
-  apiKey: "AIzaSyAZNQDKsjEFVCr_pe4ErQ5gRDVazAusEa0",
-  authDomain: "inventory-f1315.firebaseapp.com",
-  projectId: "inventory-f1315",
-  storageBucket: "inventory-f1315.firebasestorage.app",
-  messagingSenderId: "271690039778",
-  appId: "1:271690039778:web:cfd7cad3be480d3f44f9bb"
+  apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain:        import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId:         import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket:     import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 };
 
-// Firebase initialize
+// Asosiy Firebase instance
 const app = initializeApp(firebaseConfig);
 
-// Firestore database
-export const db = getFirestore(app);
+// Admin xodim qo'shganda current sessionni buzmaslik uchun ikkinchi instance
+// (createUserWithEmailAndPassword avtomatik sign-in qiladi — secondaryAuth bilan bunga yo'l qo'ymaymiz)
+export const secondaryApp = initializeApp(firebaseConfig, 'Secondary');
 
+export const db          = getFirestore(app);
+// Ikkinchi app uchun alohida Firestore instance — secondaryAuth tokeni bilan ishlaydi
+export const secondaryDb = getFirestore(secondaryApp);
+export const storage     = getStorage(app);
+export const auth        = getAuth(app);
+
+export { firebaseConfig };
 export default app;

@@ -1,127 +1,300 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    
-    // ============================================
-    // YORDAMCHI FUNKSIYALAR
-    // ============================================
-    
-    // So'rov ma'lumotlari
-    function requestData() {
-      return request.resource.data;
+
+    // ─── Yordamchi funksiyalar ────────────────────────────────────────
+
+    // Kirgan foydalanuvchi Firestore hujjati
+    function me() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
-    
-    // Mavjud ma'lumotlar
-    function existingData() {
-      return resource.data;
+
+    // Foydalanuvchi ma'lum kompaniyaga tegishli (server-side tekshiruv)
+    function myCompanyId() {
+      return me().companyId;
     }
-    
-    // CompanyId tekshirish (so'rovda)
-    function hasValidCompanyId() {
-      return requestData().companyId != null && requestData().companyId != '';
+
+    // Autentifikatsiya tekshiruvi
+    function isLoggedIn() {
+      return request.auth != null && request.auth.uid != null;
     }
-    
-    // ============================================
-    // COMPANIES - Kompaniyalar
-    // ============================================
+
+    // Admin roli
+    function isAdmin() {
+      return isLoggedIn() && me().role == 'admin';
+    }
+
+    // Yozilayotgan hujjatda companyId mavjud va bo'sh emas
+    function hasCompanyId() {
+      return request.resource.data.companyId is string
+          && request.resource.data.companyId.size() > 0;
+    }
+
+    // Mavjud hujjatning companyId si o'zgartirilmayapti
+    function companyIdUnchanged() {
+      return !('companyId' in request.resource.data)
+          || request.resource.data.companyId == resource.data.companyId;
+    }
+
+    // String maydoni mavjud va bo'sh emas
+    function nonEmptyString(field) {
+      return request.resource.data[field] is string
+          && request.resource.data[field].size() > 0;
+    }
+
+    // Resurs shu foydalanuvchining kompaniyasiga tegishli
+    function belongsToMyCompany() {
+      return isLoggedIn() && resource.data.companyId == myCompanyId();
+    }
+
+    // Yozilayotgan hujjat shu foydalanuvchining kompaniyasiga tegishli
+    function writingToMyCompany() {
+      return isLoggedIn() && request.resource.data.companyId == myCompanyId();
+    }
+
+    // Super Admin tekshiruvi
+    function isSuperAdmin() {
+      return isLoggedIn()
+          && exists(/databases/$(database)/documents/superadmins/$(request.auth.uid));
+    }
+
+    // ─── COMPANIES ────────────────────────────────────────────────────
     match /companies/{companyId} {
-      // O'qish: Hamma (login/trial tekshirish uchun)
+      // Faqat o'z kompaniyasini ko'radi; login paytida kompaniya tekshirish uchun
+      // ro'yxatdan o'tish oqimida ham kerak (request.auth bo'lmaydi)
       allow read: if true;
-      
-      // Yaratish: Hamma (ro'yxatdan o'tish)
-      allow create: if true;
-      
-      // Yangilash: Hamma (sozlamalar uchun)
-      allow update: if true;
-      
-      // O'chirish: Hech kim (ma'lumotlar yo'qolmasin)
+
+      // Yangi kompaniya yaratish — ro'yxatdan o'tish paytida (hali auth yo'q bo'lishi mumkin)
+      allow create: if nonEmptyString('name')
+                    && request.resource.data.isDeleted == false
+                    && request.resource.data.isActive == true;
+
+      // Yangilash: faqat o'z kompaniyasi admini YOKI super admin
+      allow update: if isSuperAdmin()
+                    || (
+                      isLoggedIn()
+                      && companyId == myCompanyId()
+                      && resource.data.isDeleted == false
+                      && (
+                        !('isDeleted' in request.resource.data)
+                        || request.resource.data.isDeleted == false
+                      )
+                    );
+
+      // O'chirish: faqat super admin (haqiqiy delete)
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── USERS ────────────────────────────────────────────────────────
+    match /users/{userId} {
+      // Login uchun username bo'yicha qidirish — autentifikatsiyadan oldin
+      // (onAuthStateChanged paytida ham kerak)
+      allow read: if true;
+
+      // Yaratish: Firebase Auth bilan yaratilgan hisob
+      // - Ro'yxatdan o'tish: yangi admin o'z hujjatini yozadi (userId == request.auth.uid)
+      // - Admin xodim qo'shadi: admin o'z kompaniyasiga yangi user yozadi
+      allow create: if request.auth != null
+                    && nonEmptyString('username')
+                    && nonEmptyString('companyId')
+                    && nonEmptyString('role')
+                    && request.resource.data.role in ['admin', 'menejer', 'kassir', 'sotuvchi']
+                    && request.resource.data.isDeleted == false
+                    && (
+                      // O'z hisobini yaratish (ro'yxatdan o'tish)
+                      userId == request.auth.uid
+                      // Yoki admin o'z kompaniyasiga xodim qo'shadi
+                      || (isAdmin() && request.resource.data.companyId == myCompanyId())
+                    );
+
+      // Yangilash: o'zini yangilashi yoki admin o'z kompaniyasidagini yangilashi
+      allow update: if isLoggedIn()
+                    && (
+                      userId == request.auth.uid
+                      || (isAdmin() && resource.data.companyId == myCompanyId())
+                    )
+                    && companyIdUnchanged()
+                    && (
+                      !('role' in request.resource.data)
+                      || request.resource.data.role in ['admin', 'menejer', 'kassir', 'sotuvchi']
+                    );
+
+      // O'chirish: faqat super admin (kompaniya o'chirilganda)
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── SUPER ADMINS ─────────────────────────────────────────────────
+    match /superadmins/{uid} {
+      // Faqat o'zining hujjatini o'qiy oladi
+      allow read: if isLoggedIn() && request.auth.uid == uid;
+      // Faqat superadmin@crm-app.com emaili bilan yaratilgan hisob yoza oladi
+      allow create: if isLoggedIn()
+                    && request.auth.uid == uid
+                    && request.auth.token.email == 'superadmin@crm-app.com';
+      allow update, delete: if false;
+    }
+
+    // ─── PRODUCTS ────────────────────────────────────────────────────
+    match /products/{productId} {
+      // O'z kompaniyasining xodimlari, super admin, yoki online do'konda ko'rinuvchi mahsulotlar
+      allow read: if (isLoggedIn() && belongsToMyCompany())
+                  || isSuperAdmin()
+                  || resource.data.showOnline == true; // public online catalog
+
+      allow create: if writingToMyCompany()
+                    && nonEmptyString('name')
+                    && request.resource.data.quantity is number
+                    && request.resource.data.quantity >= 0;
+
+      allow update: if isLoggedIn()
+                    && belongsToMyCompany()
+                    && companyIdUnchanged()
+                    && (
+                      !('quantity' in request.resource.data)
+                      || request.resource.data.quantity >= 0
+                    );
+
+      allow delete: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
+    }
+
+    // ─── TRANSACTIONS ─────────────────────────────────────────────────
+    match /transactions/{transactionId} {
+      allow read: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
+
+      allow create: if writingToMyCompany()
+                    && request.resource.data.type in ['kirim', 'chiqim', 'qaytarish']
+                    && request.resource.data.quantity is number
+                    && request.resource.data.quantity > 0
+                    && request.resource.data.totalAmount is number
+                    && request.resource.data.totalAmount >= 0;
+
+      // Faqat to'lov yangilanishi (chiqim tranzaksiyasi)
+      allow update: if isLoggedIn()
+                    && belongsToMyCompany()
+                    && companyIdUnchanged()
+                    && resource.data.type == 'chiqim';
+
+      // Tranzaksiyalar o'chirilmaydi (audit log)
       allow delete: if false;
     }
-    
-    // ============================================
-    // USERS - Foydalanuvchilar
-    // ============================================
-    match /users/{userId} {
-      // O'qish: Hamma (login uchun username bo'yicha qidirish)
-      // Xavfsiz: Parollar bcrypt bilan hashlangan
-      allow read: if true;
-      
-      // Yaratish: Hamma (ro'yxatdan o'tish, yangi xodim)
-      allow create: if true;
-      
-      // Yangilash: Hamma (profil, parol o'zgartirish)
-      allow update: if true;
-      
-      // O'chirish: Hamma (admin xodimni o'chirishi)
-      allow delete: if true;
-    }
-    
-    // ============================================
-    // PRODUCTS - Mahsulotlar
-    // ============================================
-    match /products/{productId} {
-      // O'qish: Hamma
-      allow read: if true;
-      
-      // Yaratish: CompanyId bo'lishi shart
-      allow create: if hasValidCompanyId();
-      
-      // Yangilash/O'chirish: Hamma
-      allow update, delete: if true;
-    }
-    
-    // ============================================
-    // TRANSACTIONS - Tranzaksiyalar (sotish, kirim)
-    // ============================================
-    match /transactions/{transactionId} {
-      allow read: if true;
-      allow create: if hasValidCompanyId();
-      allow update, delete: if true;
-    }
-    
-    // ============================================
-    // CATEGORIES - Kategoriyalar
-    // ============================================
+
+    // ─── CATEGORIES ───────────────────────────────────────────────────
     match /categories/{categoryId} {
-      allow read: if true;
-      allow create: if hasValidCompanyId();
-      allow update, delete: if true;
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany() && nonEmptyString('name');
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
     }
-    
-    // ============================================
-    // BACKUPS - Zaxira nusxalar
-    // ============================================
+
+    // ─── BACKUPS ──────────────────────────────────────────────────────
     match /backups/{backupId} {
-      allow read: if true;
-      allow create: if hasValidCompanyId();
-      allow update, delete: if true;
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany();
+      allow update: if false;
+      allow delete: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
     }
-    
-    // ============================================
-    // INVENTORIES - Inventarizatsiya
-    // ============================================
+
+    // ─── INVENTORIES ──────────────────────────────────────────────────
     match /inventories/{inventoryId} {
-      allow read: if true;
-      allow create: if hasValidCompanyId();
-      allow update, delete: if true;
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany();
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if isSuperAdmin();
     }
-    
-    // ============================================
-    // BARCODES - Barcode tarixi
-    // ============================================
+
+    // ─── BARCODES ─────────────────────────────────────────────────────
     match /barcodes/{barcodeId} {
-      allow read: if true;
-      allow create: if hasValidCompanyId();
-      allow update, delete: if true;
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany();
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
     }
-    
-    // ============================================
-    // PAYMENT REQUESTS - To'lov so'rovlari
-    // ============================================
+
+    // ─── PAYMENT REQUESTS ─────────────────────────────────────────────
     match /paymentRequests/{requestId} {
+      allow read: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
+      allow create: if writingToMyCompany();
+      allow update: if (isLoggedIn()
+                    && belongsToMyCompany()
+                    && companyIdUnchanged()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'approvedAt', 'approvedBy', 'notes']))
+                    || isSuperAdmin();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── DRAFT SALES (kechiktirilgan sotuvlar) ────────────────────────
+    match /draftSales/{draftId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany();
+      allow update: if false;
+      allow delete: if (isLoggedIn() && belongsToMyCompany()) || isSuperAdmin();
+    }
+
+    // ─── SHOPS (Do'konlar) ───────────────────────────────────────────
+    match /shops/{shopId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany() && nonEmptyString('name');
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── PROMOTIONS (Aksiyalar) ───────────────────────────────────────
+    match /promotions/{promotionId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany() && nonEmptyString('name');
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if false;
+    }
+
+    // ─── PROMO CODES ──────────────────────────────────────────────────
+    match /promoCodes/{codeId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany() && nonEmptyString('code');
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if false;
+    }
+
+    // ─── SMS TEMPLATES ────────────────────────────────────────────────
+    match /smsTemplates/{templateId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany() && nonEmptyString('message');
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if false;
+    }
+
+    // ─── GIFT CARDS ───────────────────────────────────────────────────
+    match /giftCards/{cardId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if writingToMyCompany() && nonEmptyString('code');
+      allow update: if isLoggedIn() && belongsToMyCompany() && companyIdUnchanged();
+      allow delete: if false;
+    }
+
+    // ─── ONLINE STORE SETTINGS ────────────────────────────────────────
+    match /onlineStores/{companyId} {
       allow read: if true;
-      allow create: if hasValidCompanyId();
-      allow update, delete: if true;
+      allow create, update: if isLoggedIn() && companyId == myCompanyId();
+      allow delete: if false;
+    }
+
+    // ─── ORDERS (mijozlar buyurtmalari) ───────────────────────────────
+    match /orders/{orderId} {
+      allow read: if isLoggedIn() && belongsToMyCompany();
+      allow create: if request.resource.data.companyId is string
+                    && request.resource.data.companyId.size() > 0
+                    && request.resource.data.items is list
+                    && request.resource.data.items.size() > 0;
+      allow update: if isLoggedIn()
+                    && belongsToMyCompany()
+                    && request.resource.data.diff(resource.data).affectedKeys()
+                         .hasOnly(['status', 'updatedAt', 'note', 'deliveredAt', 'courierId']);
+      allow delete: if isSuperAdmin();
+    }
+
+    // ─── Boshqa barcha kolleksiyalar — rad etish ─────────────────────
+    match /{document=**} {
+      allow read, write: if false;
     }
   }
 }

@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { User, Plus, Trash2, Shield, Phone, Mail, Calendar, Edit2, X, Check, AlertTriangle } from 'lucide-react';
-import { collection, addDoc, deleteDoc, doc, updateDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, doc, updateDoc, getDocs, query, where } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-toastify';
-import { hashPassword } from '../utils/passwordUtils';
+import authService from '../utils/authService';
 
 const Users = ({ currentUser, companyData }) => {
   const [users, setUsers] = useState([]);
@@ -66,8 +66,8 @@ const Users = ({ currentUser, companyData }) => {
       return;
     }
 
-    if (newUser.password.length < 4) {
-      toast.error('Parol kamida 4 belgidan iborat bo\'lishi kerak!');
+    if (newUser.password.length < 8) {
+      toast.error('Parol kamida 8 belgidan iborat bo\'lishi kerak!');
       return;
     }
 
@@ -80,28 +80,32 @@ const Users = ({ currentUser, companyData }) => {
     const loadingToast = toast.loading('Foydalanuvchi qo\'shilmoqda...');
 
     try {
-      // Parolni hash qilish
-      const hashedPassword = await hashPassword(newUser.password);
-      
-      const userData = {
-        username: newUser.username.trim().toLowerCase(),
-        password: hashedPassword,
-        name: newUser.name.trim(),
-        phone: newUser.phone.trim(),
-        role: newUser.role,
-        companyId: currentUser.companyId,
-        createdAt: new Date(),
-        createdBy: currentUser.id,
-        isActive: true,
-        isDeleted: false
-      };
+      const result = await authService.addUser(
+        {
+          username: newUser.username.trim(),
+          password: newUser.password,
+          name: newUser.name.trim(),
+          phone: newUser.phone.trim(),
+          role: newUser.role,
+        },
+        currentUser.companyId
+      );
 
-      const docRef = await addDoc(collection(db, 'users'), userData);
-      setUsers(prev => [...prev, { id: docRef.id, ...userData }]);
+      if (!result.success) {
+        toast.update(loadingToast, {
+          render: `❌ ${result.error}`,
+          type: 'error',
+          isLoading: false,
+          autoClose: 4000
+        });
+        setSaving(false);
+        return;
+      }
 
+      setUsers(prev => [...prev, result.user]);
       setNewUser({ username: '', password: '', name: '', phone: '', role: 'sotuvchi' });
       setShowModal(false);
-      
+
       toast.update(loadingToast, {
         render: '✅ Foydalanuvchi qo\'shildi!',
         type: 'success',
@@ -137,14 +141,18 @@ const Users = ({ currentUser, companyData }) => {
       };
 
       if (editingUser.newPassword) {
-        if (editingUser.newPassword.length < 4) {
-          toast.error('Yangi parol kamida 4 belgidan iborat bo\'lishi kerak!');
+        if (editingUser.newPassword.length < 8) {
+          toast.error('Yangi parol kamida 8 belgidan iborat bo\'lishi kerak!');
           setSaving(false);
           toast.dismiss(loadingToast);
           return;
         }
-        // Parolni hash qilish
-        updatedData.password = await hashPassword(editingUser.newPassword);
+        // Parolni Firebase Auth orqali o'zgartirish admin tarafdan hozircha qo'llab-quvvatlanmaydi
+        // (Firebase Admin SDK yoki Cloud Function kerak). Faqat profil ma'lumotlari yangilanadi.
+        toast.error('Xodim parolini o\'zgartirish uchun xodim o\'zi tizimga kirib o\'zgartirishi kerak!');
+        setSaving(false);
+        toast.dismiss(loadingToast);
+        return;
       }
 
       await updateDoc(doc(db, 'users', editingUser.id), updatedData);
@@ -189,7 +197,8 @@ const Users = ({ currentUser, companyData }) => {
     if (window.confirm(`${user?.name}ni o\'chirmoqchimisiz?`)) {
       const loadingToast = toast.loading('O\'chirilmoqda...');
       try {
-        await deleteDoc(doc(db, 'users', userId));
+        const result = await authService.deleteUser(userId);
+        if (!result.success) throw new Error(result.error);
         setUsers(prev => prev.filter(u => u.id !== userId));
         toast.update(loadingToast, {
           render: '✅ Foydalanuvchi o\'chirildi!',
@@ -209,8 +218,10 @@ const Users = ({ currentUser, companyData }) => {
     }
   };
 
-  const admins = users.filter(u => u.role === 'admin' && !u.isDeleted);
-  const sellers = users.filter(u => u.role === 'sotuvchi' && !u.isDeleted);
+  const admins     = users.filter(u => u.role === 'admin'    && !u.isDeleted);
+  const menejerlar = users.filter(u => u.role === 'menejer' && !u.isDeleted);
+  const kassirlar  = users.filter(u => u.role === 'kassir'  && !u.isDeleted);
+  const sellers    = users.filter(u => u.role === 'sotuvchi' && !u.isDeleted);
 
   if (loading) {
     return (
@@ -230,7 +241,7 @@ const Users = ({ currentUser, companyData }) => {
         <div>
           <h2 className="text-2xl font-bold text-slate-800">Foydalanuvchilar</h2>
           <p className="text-slate-500 mt-1">
-            {admins.length} ta admin, {sellers.length} ta sotuvchi
+            {admins.length} ta direktor · {menejerlar.length} ta boshqaruvchi · {kassirlar.length} ta kassir · {sellers.length} ta sotuvchi
           </p>
         </div>
         {isAdmin && (
@@ -245,7 +256,7 @@ const Users = ({ currentUser, companyData }) => {
       </div>
 
       {/* Statistics Cards */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
         <div className="p-4 bg-gradient-to-br from-violet-500 to-violet-600 rounded-2xl text-white shadow-lg shadow-violet-500/25">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-white/20 rounded-xl">
@@ -264,8 +275,20 @@ const Users = ({ currentUser, companyData }) => {
               <Shield className="w-6 h-6" />
             </div>
             <div>
-              <p className="text-amber-100 text-sm">Adminlar</p>
+              <p className="text-amber-100 text-sm">Direktorlar</p>
               <p className="text-2xl font-bold">{admins.length}</p>
+            </div>
+          </div>
+        </div>
+
+        <div className="p-4 bg-gradient-to-br from-indigo-500 to-indigo-600 rounded-2xl text-white shadow-lg shadow-indigo-500/25">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-white/20 rounded-xl">
+              <User className="w-6 h-6" />
+            </div>
+            <div>
+              <p className="text-indigo-100 text-sm">Kassirlar</p>
+              <p className="text-2xl font-bold">{kassirlar.length}</p>
             </div>
           </div>
         </div>
@@ -320,11 +343,12 @@ const Users = ({ currentUser, companyData }) => {
               {/* Header */}
               <div className="flex justify-between items-start mb-4">
                 <div className={`w-16 h-16 rounded-2xl flex items-center justify-center ${
-                  user.role === 'admin' 
-                    ? 'bg-gradient-to-br from-amber-400 to-amber-500' 
-                    : 'bg-gradient-to-br from-emerald-400 to-emerald-500'
+                  user.role === 'admin'   ? 'bg-gradient-to-br from-amber-400 to-amber-500' :
+                  user.role === 'menejer' ? 'bg-gradient-to-br from-blue-400 to-blue-500' :
+                  user.role === 'kassir'  ? 'bg-gradient-to-br from-indigo-400 to-indigo-500' :
+                  'bg-gradient-to-br from-emerald-400 to-emerald-500'
                 }`}>
-                  {user.role === 'admin' ? (
+                  {user.role === 'admin' || user.role === 'menejer' ? (
                     <Shield className="w-8 h-8 text-white" />
                   ) : (
                     <User className="w-8 h-8 text-white" />
@@ -366,11 +390,14 @@ const Users = ({ currentUser, companyData }) => {
               {/* Badges */}
               <div className="flex flex-wrap items-center gap-2 mt-4">
                 <span className={`px-3 py-1.5 rounded-xl text-xs font-semibold ${
-                  user.role === 'admin' 
-                    ? 'bg-amber-100 text-amber-700' 
-                    : 'bg-emerald-100 text-emerald-700'
+                  user.role === 'admin'   ? 'bg-amber-100 text-amber-700' :
+                  user.role === 'menejer' ? 'bg-blue-100 text-blue-700' :
+                  user.role === 'kassir'  ? 'bg-indigo-100 text-indigo-700' :
+                  'bg-emerald-100 text-emerald-700'
                 }`}>
-                  {user.role === 'admin' ? '👑 Admin' : '👤 Sotuvchi'}
+                  {user.role === 'admin' ? '👑 Direktor' :
+                   user.role === 'menejer' ? '🗂 Ish boshqaruvchi' :
+                   user.role === 'kassir'  ? '💳 Kassir' : '👤 Sotuvchi'}
                 </span>
                 {user.id === currentUser.id && (
                   <span className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-violet-100 text-violet-700">
@@ -449,44 +476,67 @@ const Users = ({ currentUser, companyData }) => {
 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Rol</label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setNewUser({ ...newUser, role: 'sotuvchi' })}
-                    className={`p-4 rounded-xl border-2 transition-all ${
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
                       newUser.role === 'sotuvchi'
                         ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <User className="w-6 h-6 mx-auto mb-2" />
-                    <p className="font-semibold">Sotuvchi</p>
-                    <p className="text-xs text-slate-500">Asosiy funksiyalar</p>
+                    <User className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Sotuvchi</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Faqat sotuv</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewUser({ ...newUser, role: 'kassir' })}
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
+                      newUser.role === 'kassir'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <User className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Kassir</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Sotuv + tarixi</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewUser({ ...newUser, role: 'menejer' })}
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
+                      newUser.role === 'menejer'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <Shield className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Ish boshqaruvchi</p>
+                    <p className="text-xs text-slate-500 mt-0.5">Kirim + tahlil</p>
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewUser({ ...newUser, role: 'admin' })}
-                    className={`p-4 rounded-xl border-2 transition-all ${
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
                       newUser.role === 'admin'
                         ? 'border-amber-500 bg-amber-50 text-amber-700'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <Shield className="w-6 h-6 mx-auto mb-2" />
-                    <p className="font-semibold">Admin</p>
-                    <p className="text-xs text-slate-500">To'liq huquqlar</p>
+                    <Shield className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Direktor</p>
+                    <p className="text-xs text-slate-500 mt-0.5">To'liq huquq</p>
                   </button>
                 </div>
               </div>
 
-              <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 text-sm text-amber-800">
-                <div className="flex gap-2">
-                  <AlertTriangle className="w-5 h-5 flex-shrink-0" />
-                  <div>
-                    <p className="font-semibold mb-1">Eslatma:</p>
-                    <p>Admin barcha ma'lumotlarni, shu jumladan tannarx va foydani ko'rish huquqiga ega.</p>
-                  </div>
-                </div>
+              <div className="bg-slate-50 border border-slate-200 rounded-xl p-4 text-xs text-slate-600 space-y-1">
+                <p><span className="font-bold text-emerald-700">🛒 Sotuvchi:</span> faqat Sotish ekrani</p>
+                <p><span className="font-bold text-indigo-700">💳 Kassir:</span> Sotish + Sotuvlar tarixi + Qarzdorlar</p>
+                <p><span className="font-bold text-blue-700">🗂 Ish boshqaruvchi:</span> Kirim + Mahsulotlar + Statistika + Marketing</p>
+                <p><span className="font-bold text-amber-700">👑 Direktor:</span> hamma bo'lim + sozlamalar</p>
               </div>
             </div>
 
@@ -562,30 +612,54 @@ const Users = ({ currentUser, companyData }) => {
 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-2">Rol</label>
-                <div className="grid grid-cols-2 gap-3">
+                <div className="grid grid-cols-2 gap-2">
                   <button
                     type="button"
                     onClick={() => setEditingUser({ ...editingUser, role: 'sotuvchi' })}
-                    className={`p-4 rounded-xl border-2 transition-all ${
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
                       editingUser.role === 'sotuvchi'
                         ? 'border-emerald-500 bg-emerald-50 text-emerald-700'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <User className="w-6 h-6 mx-auto mb-2" />
-                    <p className="font-semibold">Sotuvchi</p>
+                    <User className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Sotuvchi</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingUser({ ...editingUser, role: 'kassir' })}
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
+                      editingUser.role === 'kassir'
+                        ? 'border-indigo-500 bg-indigo-50 text-indigo-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <User className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Kassir</p>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setEditingUser({ ...editingUser, role: 'menejer' })}
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
+                      editingUser.role === 'menejer'
+                        ? 'border-blue-500 bg-blue-50 text-blue-700'
+                        : 'border-slate-200 hover:border-slate-300'
+                    }`}
+                  >
+                    <Shield className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Ish boshqaruvchi</p>
                   </button>
                   <button
                     type="button"
                     onClick={() => setEditingUser({ ...editingUser, role: 'admin' })}
-                    className={`p-4 rounded-xl border-2 transition-all ${
+                    className={`p-3 rounded-xl border-2 transition-all text-center ${
                       editingUser.role === 'admin'
                         ? 'border-amber-500 bg-amber-50 text-amber-700'
                         : 'border-slate-200 hover:border-slate-300'
                     }`}
                   >
-                    <Shield className="w-6 h-6 mx-auto mb-2" />
-                    <p className="font-semibold">Admin</p>
+                    <Shield className="w-5 h-5 mx-auto mb-1" />
+                    <p className="font-semibold text-sm">Direktor</p>
                   </button>
                 </div>
               </div>

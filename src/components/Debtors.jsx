@@ -4,7 +4,7 @@ import {
   AlertTriangle, Clock, ChevronDown, ChevronUp, Filter,
   TrendingDown, Users, Receipt, Plus, X
 } from 'lucide-react';
-import { collection, addDoc, updateDoc, doc, query, where, getDocs } from 'firebase/firestore';
+import { collection, addDoc, updateDoc, doc, query, where, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-toastify';
 
@@ -132,27 +132,34 @@ const Debtors = ({ transactions, onUpdateTransaction, currentUser }) => {
         return dateA - dateB;
       });
 
+      // Barcha yangilanishlarni hisoblash
+      const updates = [];
       for (const trans of sortedTrans) {
         if (remaining <= 0) break;
         if (trans.debt <= 0) continue;
-
         const payForThis = Math.min(remaining, trans.debt);
-        const newDebt = trans.debt - payForThis;
-        const newPaid = (trans.paidAmount || 0) + payForThis;
-
-        await updateDoc(doc(db, 'transactions', trans.id), {
-          debt: newDebt,
-          paidAmount: newPaid
+        updates.push({
+          trans,
+          newDebt: trans.debt - payForThis,
+          newPaid: (trans.paidAmount || 0) + payForThis,
         });
-
-        onUpdateTransaction({
-          ...trans,
-          debt: newDebt,
-          paidAmount: newPaid
-        });
-
         remaining -= payForThis;
       }
+
+      // writeBatch — hammasi bir vaqtda yoziladi, bitta muvaffaqiyatsiz bo'lsa hammasi bekor
+      const batch = writeBatch(db);
+      updates.forEach(({ trans, newDebt, newPaid }) => {
+        batch.update(doc(db, 'transactions', trans.id), {
+          debt: newDebt,
+          paidAmount: newPaid,
+        });
+      });
+      await batch.commit();
+
+      // UI state ni yangilash
+      updates.forEach(({ trans, newDebt, newPaid }) => {
+        onUpdateTransaction({ ...trans, debt: newDebt, paidAmount: newPaid });
+      });
 
       toast.success(`${amount.toLocaleString()} so'm to'lov qabul qilindi!`);
       setShowPayModal(false);
@@ -160,7 +167,7 @@ const Debtors = ({ transactions, onUpdateTransaction, currentUser }) => {
       setPayAmount('');
     } catch (error) {
       console.error('To\'lov xatosi:', error);
-      toast.error('Xatolik yuz berdi!');
+      toast.error('To\'lov amalga oshmadi! Qayta urining.');
     }
     setLoading(false);
   };

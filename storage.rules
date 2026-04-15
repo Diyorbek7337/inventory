@@ -1,0 +1,29 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    // Mahsulot rasmlari: products/{companyId}/{filename}
+    match /products/{companyId}/{allPaths=**} {
+      // Faqat kirgan foydalanuvchi o'z kompaniyasiga rasm yuklaydi
+      allow read:   if true; // Public o'qish (online do'kon uchun)
+      allow write:  if request.auth != null
+                    && request.resource.size < 5 * 1024 * 1024   // max 5MB
+                    && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null;
+    }
+
+    // Online do'kon logo/banner: stores/{companyId}/{filename}
+    match /stores/{companyId}/{allPaths=**} {
+      allow read:   if true;
+      allow write:  if request.auth != null
+                    && request.resource.size < 5 * 1024 * 1024
+                    && request.resource.contentType.matches('image/.*');
+      allow delete: if request.auth != null;
+    }
+
+    // Boshqa fayllar — rad etish
+    match /{allPaths=**} {
+      allow read, write: if false;
+    }
+  }
+}

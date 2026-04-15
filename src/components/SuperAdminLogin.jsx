@@ -1,28 +1,62 @@
 import React, { useState } from 'react';
 import { Crown, Lock, Shield } from 'lucide-react';
 import { toast } from 'react-toastify';
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../firebase';
+
+// Super Admin Firebase Auth hisob ma'lumotlari
+const SA_EMAIL    = 'superadmin@crm-app.com';
+const SA_PASSWORD = 'superadmin2024'; // Parolni bu yerda o'zgartiring
 
 const SuperAdminLogin = ({ onLogin, onBack }) => {
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Super Admin parolini bu yerda o'zgartiring!
-  // Keyinchalik bu Firebase yoki environment variable orqali saqlanadi
-  const SUPER_ADMIN_PASSWORD = 'superadmin2024';
-
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
+    if (password !== SA_PASSWORD) {
+      toast.error('Parol noto\'g\'ri!');
+      return;
+    }
     setLoading(true);
-
-    setTimeout(() => {
-      if (password === SUPER_ADMIN_PASSWORD) {
-        toast.success('Super Admin tizimiga xush kelibsiz!');
-        onLogin();
-      } else {
-        toast.error('Parol noto\'g\'ri!');
+    try {
+      // Firebase Auth bilan kirish (Firestore rules uchun kerak)
+      let userCred;
+      try {
+        userCred = await signInWithEmailAndPassword(auth, SA_EMAIL, SA_PASSWORD);
+      } catch (authErr) {
+        if (
+          authErr.code === 'auth/user-not-found' ||
+          authErr.code === 'auth/invalid-credential' ||
+          authErr.code === 'auth/invalid-email'
+        ) {
+          // Birinchi ishga tushirishda hisob yaratish
+          userCred = await createUserWithEmailAndPassword(auth, SA_EMAIL, SA_PASSWORD);
+        } else {
+          throw authErr;
+        }
       }
-      setLoading(false);
-    }, 500);
+
+      const uid = userCred.user.uid;
+
+      // superadmins/{uid} hujjatini yaratish (birinchi marta)
+      const saRef = doc(db, 'superadmins', uid);
+      const saSnap = await getDoc(saRef);
+      if (!saSnap.exists()) {
+        await setDoc(saRef, { email: SA_EMAIL, createdAt: new Date() });
+      }
+
+      toast.success('Super Admin tizimiga xush kelibsiz!');
+      onLogin();
+    } catch (err) {
+      console.error('Super admin login error:', err);
+      toast.error('Kirishda xatolik: ' + err.message);
+    }
+    setLoading(false);
   };
 
   return (

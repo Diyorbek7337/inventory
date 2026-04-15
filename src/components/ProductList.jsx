@@ -1,9 +1,10 @@
-import React, { useState, useMemo } from 'react';
-import { Search, Trash2, Edit, Package, FolderPlus, Camera, Scan, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Filter, AlertTriangle, Calendar } from 'lucide-react';
+import React, { useState, useMemo, useRef } from 'react';
+import { Search, Trash2, Edit, Package, FolderPlus, Camera, Scan, Eye, EyeOff, ArrowUpDown, ArrowUp, ArrowDown, Filter, AlertTriangle, Calendar, Barcode, Globe, Upload, X, ImageIcon } from 'lucide-react';
 import { deleteDoc, doc, updateDoc, addDoc, collection } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-toastify';
 import BarcodeScanner from './BarcodeScanner';
+import BarcodeLabel from './BarcodeLabel';
 
 const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, onAddCategory, onDeleteCategory, isAdmin, currentUser }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -14,7 +15,11 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
   const [newCategory, setNewCategory] = useState('');
   const [showScanner, setShowScanner] = useState(false);
   const [showCostPrices, setShowCostPrices] = useState(false);
+  const [barcodeProduct, setBarcodeProduct] = useState(null);
   const [showFilters, setShowFilters] = useState(false);
+  const [imageUploading, setImageUploading] = useState(false);
+  const [imageUploadProgress, setImageUploadProgress] = useState(0);
+  const imageInputRef = useRef(null);
   
   // Sorting state
   const [sortField, setSortField] = useState('name'); // name, quantity, price, totalValue, expiration
@@ -163,6 +168,55 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
     }
   };
 
+  // Rasmni base64 DataURL sifatida Firestore'ga saqlaymiz (Firebase Storage shart emas)
+  const uploadImage = async (file) => {
+    if (!file) return;
+    if (file.size > 10 * 1024 * 1024) {
+      toast.error('Rasm 10MB dan kichik bo\'lishi kerak!');
+      return;
+    }
+    setImageUploading(true);
+    setImageUploadProgress(30);
+    try {
+      // Canvas orqali siqish (400px max, quality 0.70)
+      const dataUrl = await new Promise((resolve) => {
+        const img = new Image();
+        img.onload = () => {
+          const maxSize = 400;
+          let { width, height } = img;
+          if (width > maxSize || height > maxSize) {
+            const ratio = Math.min(maxSize / width, maxSize / height);
+            width  = Math.round(width  * ratio);
+            height = Math.round(height * ratio);
+          }
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+          resolve(canvas.toDataURL('image/jpeg', 0.70));
+        };
+        img.src = URL.createObjectURL(file);
+      });
+
+      setImageUploadProgress(80);
+      await updateDoc(doc(db, 'products', editingProduct.id), { imageUrl: dataUrl });
+      setImageUploadProgress(100);
+      setEditingProduct(prev => ({ ...prev, imageUrl: dataUrl }));
+      toast.success('Rasm saqlandi!');
+    } catch {
+      toast.error('Rasm saqlashda xatolik!');
+    }
+    setImageUploading(false);
+  };
+
+  const removeImage = async () => {
+    if (!editingProduct.imageUrl) return;
+    try {
+      await updateDoc(doc(db, 'products', editingProduct.id), { imageUrl: '' });
+    } catch { /* skip */ }
+    setEditingProduct(prev => ({ ...prev, imageUrl: '' }));
+  };
+
   const saveEdit = async () => {
     if (!editingProduct.name || !editingProduct.sellingPrice) {
       toast.error('Majburiy maydonlarni to\'ldiring!');
@@ -179,7 +233,10 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
         sellingPrice: parseFloat(editingProduct.sellingPrice),
         price: parseFloat(editingProduct.sellingPrice),
         barcode: editingProduct.barcode,
-        quantity: parseInt(editingProduct.quantity)
+        quantity: parseInt(editingProduct.quantity),
+        imageUrl: editingProduct.imageUrl || '',
+        showOnline: editingProduct.showOnline || false,
+        description: editingProduct.description || '',
       };
 
       await updateDoc(doc(db, 'products', editingProduct.id), updatedData);
@@ -490,7 +547,19 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
               id={`product-${product.id}`}
               className="p-4 bg-white rounded-2xl shadow-sm border border-slate-100 transition-all"
             >
-              <div className="flex items-start justify-between mb-3">
+              <div className="flex items-start justify-between mb-3 gap-3">
+                {/* Rasm */}
+                {product.imageUrl ? (
+                  <img
+                    src={product.imageUrl}
+                    alt={product.name}
+                    className="w-14 h-14 object-cover rounded-xl border border-slate-100 shrink-0"
+                  />
+                ) : (
+                  <div className="w-14 h-14 bg-slate-100 rounded-xl flex items-center justify-center shrink-0">
+                    <Package className="w-6 h-6 text-slate-300" />
+                  </div>
+                )}
                 <div className="flex-1 min-w-0">
                   <p className="font-medium text-slate-800 truncate">{product.name}</p>
                   <div className="flex items-center gap-2 mt-1">
@@ -500,7 +569,14 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
                     {product.barcode && <span className="text-xs text-slate-400 font-mono">{product.barcode}</span>}
                   </div>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    onClick={() => setBarcodeProduct(product)}
+                    title={product.barcode ? 'Barcodni chop etish' : 'Barcode yaratish'}
+                    className={`p-2 rounded-lg ${product.barcode ? 'text-indigo-600 hover:bg-indigo-50' : 'text-amber-600 hover:bg-amber-50'}`}
+                  >
+                    <Barcode className="w-4 h-4" />
+                  </button>
                   <button onClick={() => setEditingProduct(product)} className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg">
                     <Edit className="w-4 h-4" />
                   </button>
@@ -581,7 +657,20 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
                   >
                     <td className="px-6 py-4 text-sm text-slate-500">{index + 1}</td>
                     <td className="px-6 py-4">
-                      <p className="font-medium text-slate-800">{product.name}</p>
+                      <div className="flex items-center gap-3">
+                        {product.imageUrl ? (
+                          <img
+                            src={product.imageUrl}
+                            alt={product.name}
+                            className="w-10 h-10 object-cover rounded-lg border border-slate-100 shrink-0"
+                          />
+                        ) : (
+                          <div className="w-10 h-10 bg-slate-100 rounded-lg flex items-center justify-center shrink-0">
+                            <Package className="w-5 h-5 text-slate-300" />
+                          </div>
+                        )}
+                        <p className="font-medium text-slate-800">{product.name}</p>
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <span className="px-2.5 py-1 bg-violet-100 text-violet-700 rounded-lg text-xs font-medium">
@@ -624,6 +713,13 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
                     </td>
                     <td className="px-6 py-4">
                       <div className="flex gap-2">
+                        <button
+                          onClick={() => setBarcodeProduct(product)}
+                          title={product.barcode ? 'Barcodni chop etish' : 'Barcode yaratish'}
+                          className={`p-2 rounded-lg transition-colors ${product.barcode ? 'text-indigo-600 hover:bg-indigo-50' : 'text-amber-600 hover:bg-amber-50'}`}
+                        >
+                          <Barcode className="w-4 h-4" />
+                        </button>
                         <button
                           onClick={() => setEditingProduct(product)}
                           className="p-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
@@ -721,6 +817,159 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
               <div className="p-3 text-sm text-amber-800 border border-amber-200 rounded-xl bg-amber-50">
                 ⚠️ Miqdorni o'zgartirish tavsiya etilmaydi. Kirim/Chiqim orqali boshqaring.
               </div>
+
+              {/* Rasm yuklash */}
+              <div>
+                <label className="block mb-2 text-sm font-medium text-slate-700 flex items-center gap-1.5">
+                  <ImageIcon className="w-4 h-4 text-emerald-600" />
+                  Mahsulot rasmi
+                  <span className="text-xs text-slate-400 font-normal">(online do'kon uchun)</span>
+                </label>
+
+                {editingProduct.imageUrl ? (
+                  /* Rasm yuklangan holat */
+                  <div className="relative w-full h-44 rounded-2xl overflow-hidden border-2 border-emerald-200 bg-slate-50 group shadow-sm">
+                    <img
+                      src={editingProduct.imageUrl}
+                      alt="Mahsulot rasmi"
+                      className="w-full h-full object-contain"
+                    />
+                    {/* Hover overlay */}
+                    <div className="absolute inset-0 bg-black/0 group-hover:bg-black/30 transition-all flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
+                      <button
+                        onClick={() => imageInputRef.current?.click()}
+                        className="px-3 py-2 bg-white text-slate-700 rounded-xl text-sm font-medium shadow hover:bg-slate-50 flex items-center gap-1.5"
+                      >
+                        <Upload className="w-3.5 h-3.5" />
+                        Almashtirish
+                      </button>
+                      <button
+                        onClick={removeImage}
+                        className="px-3 py-2 bg-rose-500 text-white rounded-xl text-sm font-medium shadow hover:bg-rose-600 flex items-center gap-1.5"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                        O'chirish
+                      </button>
+                    </div>
+                    {/* Corner delete button (always visible) */}
+                    <button
+                      onClick={removeImage}
+                      className="absolute top-2 right-2 p-1.5 bg-rose-500 text-white rounded-lg hover:bg-rose-600 shadow-md"
+                      title="Rasmni o'chirish"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                    <div className="absolute bottom-2 left-2 px-2 py-1 bg-emerald-500 text-white text-xs rounded-lg font-medium">
+                      ✓ Rasm yuklangan
+                    </div>
+                  </div>
+                ) : (
+                  /* Rasm yuklanmagan holat */
+                  <div
+                    onClick={() => !imageUploading && imageInputRef.current?.click()}
+                    className={`w-full rounded-2xl border-2 border-dashed transition-all cursor-pointer ${
+                      imageUploading
+                        ? 'border-emerald-300 bg-emerald-50 cursor-default'
+                        : 'border-slate-200 bg-slate-50 hover:border-emerald-400 hover:bg-emerald-50/50'
+                    }`}
+                  >
+                    {imageUploading ? (
+                      /* Yuklanmoqda holati */
+                      <div className="flex flex-col items-center justify-center py-8 gap-3">
+                        <div className="relative w-14 h-14">
+                          <div className="w-14 h-14 border-4 border-emerald-100 rounded-full" />
+                          <div
+                            className="absolute inset-0 border-4 border-emerald-500 border-t-transparent rounded-full animate-spin"
+                          />
+                          <span className="absolute inset-0 flex items-center justify-center text-xs font-bold text-emerald-600">
+                            {imageUploadProgress}%
+                          </span>
+                        </div>
+                        <div className="text-center">
+                          <p className="text-sm font-semibold text-emerald-700">Yuklanmoqda...</p>
+                          <p className="text-xs text-emerald-500 mt-0.5">Iltimos kuting</p>
+                        </div>
+                        {/* Progress bar */}
+                        <div className="w-40 h-1.5 bg-emerald-100 rounded-full overflow-hidden">
+                          <div
+                            className="h-full bg-emerald-500 rounded-full transition-all"
+                            style={{ width: `${imageUploadProgress}%` }}
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      /* Bo'sh holat — rasm yuklanmagan */
+                      <div className="flex flex-col items-center justify-center py-7 gap-2">
+                        {/* Rasm ikonkasi */}
+                        <div className="w-16 h-16 bg-slate-200 rounded-2xl flex items-center justify-center mb-1 relative">
+                          {/* Landshaft ikonkasi (rasm placeholder) */}
+                          <svg viewBox="0 0 48 48" className="w-10 h-10" fill="none">
+                            <rect x="4" y="10" width="40" height="28" rx="4" fill="#cbd5e1" />
+                            <circle cx="16" cy="20" r="4" fill="#94a3b8" />
+                            <path d="M4 34 L14 24 L22 30 L30 20 L44 34" stroke="#94a3b8" strokeWidth="2.5" fill="none" strokeLinejoin="round" />
+                          </svg>
+                          {/* Yuklash badge */}
+                          <div className="absolute -bottom-1 -right-1 w-6 h-6 bg-emerald-500 rounded-full flex items-center justify-center shadow-sm">
+                            <Upload className="w-3 h-3 text-white" />
+                          </div>
+                        </div>
+
+                        <p className="text-sm font-semibold text-slate-600">
+                          Rasm yuklash uchun bosing
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          yoki faylni bu yerga tashlang
+                        </p>
+                        <div className="flex items-center gap-2 mt-1">
+                          {['JPG', 'PNG', 'WebP'].map(ext => (
+                            <span key={ext} className="px-2 py-0.5 bg-slate-200 text-slate-500 text-xs rounded-md font-mono">
+                              {ext}
+                            </span>
+                          ))}
+                          <span className="text-xs text-slate-400">• max 5MB</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <input
+                  ref={imageInputRef}
+                  type="file"
+                  accept="image/*"
+                  className="hidden"
+                  onChange={(e) => uploadImage(e.target.files[0])}
+                />
+              </div>
+
+              {/* Tavsif */}
+              <div>
+                <label className="block mb-2 text-sm font-medium text-slate-700">Tavsif (online do'kon uchun)</label>
+                <textarea
+                  value={editingProduct.description || ''}
+                  onChange={(e) => setEditingProduct({...editingProduct, description: e.target.value})}
+                  rows={2}
+                  placeholder="Mahsulot haqida qisqacha..."
+                  className="w-full px-4 py-2.5 border border-slate-200 rounded-xl focus:ring-2 focus:ring-emerald-500 focus:border-transparent resize-none text-sm"
+                />
+              </div>
+
+              {/* Online do'konda ko'rsatish */}
+              <div className="flex items-center justify-between p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <div className="flex items-center gap-2">
+                  <Globe className="w-4 h-4 text-emerald-600" />
+                  <div>
+                    <p className="text-sm font-medium text-emerald-800">Online do'konda ko'rsatish</p>
+                    <p className="text-xs text-emerald-600">Mijozlar bu mahsulotni ko'radi</p>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setEditingProduct({...editingProduct, showOnline: !editingProduct.showOnline})}
+                  className={`relative w-12 h-6 rounded-full transition-all ${editingProduct.showOnline ? 'bg-emerald-500' : 'bg-slate-300'}`}
+                >
+                  <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-all ${editingProduct.showOnline ? 'left-7' : 'left-1'}`} />
+                </button>
+              </div>
             </div>
 
             <div className="flex gap-3 mt-6">
@@ -744,6 +993,18 @@ const ProductList = ({ products, categories, onDeleteProduct, onUpdateProduct, o
 
       {showScanner && (
         <BarcodeScanner onScan={handleBarcodeScan} onClose={() => setShowScanner(false)} />
+      )}
+
+      {barcodeProduct && (
+        <BarcodeLabel
+          product={barcodeProduct}
+          allProducts={products}
+          onClose={() => setBarcodeProduct(null)}
+          onBarcodeUpdate={(updated) => {
+            onUpdateProduct(updated);
+            setBarcodeProduct(updated);
+          }}
+        />
       )}
     </div>
   );

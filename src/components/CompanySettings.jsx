@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { 
-  Building2, Phone, Mail, MapPin, Save, 
+import {
+  Building2, Phone, Mail, MapPin, Save,
   CreditCard, Users, Package, BarChart3, Calendar,
   CheckCircle, AlertTriangle, Crown, Zap, Rocket, X,
-  Clock, Send, Copy, MessageCircle, Smartphone
+  Clock, Send, Copy, MessageCircle, FileSpreadsheet, ImagePlus, Plus, Lock
 } from 'lucide-react';
 import { doc, getDoc, updateDoc, addDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase';
@@ -28,13 +28,39 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
   const [selectedDuration, setSelectedDuration] = useState(1);
   const [showPaymentInfoModal, setShowPaymentInfoModal] = useState(false);
   const [lastRequestData, setLastRequestData] = useState(null);
+  const [showAddonModal, setShowAddonModal] = useState(false);
+  const [selectedAddon, setSelectedAddon] = useState(null);
 
-  // To'lov ma'lumotlari
+  // Add-on ta'riflari
+  const ADDONS = [
+    {
+      id: 'excel_import',
+      name: 'Excel Import',
+      description: 'Excel (.xlsx, .csv) fayldan mahsulot kiritish',
+      price: 30000,
+      icon: FileSpreadsheet,
+      color: 'emerald',
+      availableFor: ['trial', 'starter'],
+      notNeededFor: ['basic', 'pro'],
+    },
+    {
+      id: 'vision_import',
+      name: 'AI Rasm Import',
+      description: 'Rasm / faktura orqali AI bilan mahsulot kiritish (Gemini)',
+      price: 50000,
+      icon: ImagePlus,
+      color: 'indigo',
+      availableFor: ['trial', 'starter', 'basic'],
+      notNeededFor: ['pro'],
+    },
+  ];
+
+  // To'lov ma'lumotlari — .env faylidan o'qiladi
   const paymentInfo = {
-    cardNumber: '4073 4200 7540 1111',
-    cardHolder: 'ABDIQAYUMOV DIYORBEK',
-    phone: '+998 90 377 73 37',
-    telegram: '@diyorbek7337'
+    cardNumber: import.meta.env.VITE_PAYMENT_CARD    || '',
+    cardHolder: import.meta.env.VITE_PAYMENT_HOLDER  || '',
+    phone:      import.meta.env.VITE_PAYMENT_PHONE   || '',
+    telegram:   import.meta.env.VITE_PAYMENT_TELEGRAM || '',
   };
   
   const [formData, setFormData] = useState({
@@ -46,10 +72,11 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
   });
 
   const durations = [
-    { months: 1, label: '1 oy', discount: 0 },
-    { months: 3, label: '3 oy', discount: 5 },
-    { months: 6, label: '6 oy', discount: 10 },
-    { months: 12, label: '1 yil', discount: 15 }
+    { months: 1,  label: '1 oy',  discount: 0  },
+    { months: 3,  label: '3 oy',  discount: 5  },
+    { months: 6,  label: '6 oy',  discount: 10 },
+    { months: 9,  label: '9 oy',  discount: 13 },
+    { months: 12, label: '1 yil', discount: 17 },
   ];
 
   useEffect(() => {
@@ -196,6 +223,35 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
     setSaving(false);
   };
 
+  // Add-on sotib olish so'rovi
+  const submitAddonRequest = async () => {
+    if (!selectedAddon) return;
+    setSaving(true);
+    const loadingToast = toast.loading('So\'rov yuborilmoqda...');
+    try {
+      const requestData = {
+        companyId: currentUser.companyId,
+        companyName: company?.name || 'Noma\'lum',
+        type: 'addon',
+        addonId: selectedAddon.id,
+        addonName: selectedAddon.name,
+        totalAmount: selectedAddon.price,
+        status: 'pending',
+        requestedBy: currentUser.name || currentUser.username,
+        requestedAt: new Date(),
+      };
+      await addDoc(collection(db, 'paymentRequests'), requestData);
+      setLastRequestData({ ...requestData, planName: `Add-on: ${selectedAddon.name}`, durationLabel: '1 oy' });
+      toast.update(loadingToast, { render: '✅ So\'rov yuborildi!', type: 'success', isLoading: false, autoClose: 2000 });
+      setShowAddonModal(false);
+      setSelectedAddon(null);
+      setShowPaymentInfoModal(true);
+    } catch (error) {
+      toast.update(loadingToast, { render: '❌ Xatolik!', type: 'error', isLoading: false, autoClose: 3000 });
+    }
+    setSaving(false);
+  };
+
   // Trial muddati tugaganmi?
   const isTrialExpired = () => {
     if (company?.plan !== 'trial') return false;
@@ -229,8 +285,8 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
         { text: '500 ta mahsulot', included: true },
         { text: 'To\'liq statistika', included: true },
         { text: 'Barcode skanerlash', included: true },
-        { text: 'Telegram xabarnoma', included: false },
-        { text: 'API kirish', included: false }
+        { text: 'Excel import', included: false, addon: true },
+        { text: 'Rasm (AI) import', included: false, addon: true },
       ]
     },
     {
@@ -245,8 +301,8 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
         { text: '2000 ta mahsulot', included: true },
         { text: 'To\'liq statistika', included: true },
         { text: 'Barcode skanerlash', included: true },
-        { text: 'Telegram xabarnoma', included: true },
-        { text: 'API kirish', included: false }
+        { text: 'Excel import', included: true },
+        { text: 'Rasm (AI) import', included: false, addon: true },
       ]
     },
     {
@@ -260,8 +316,8 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
         { text: 'Cheksiz mahsulot', included: true },
         { text: 'To\'liq statistika', included: true },
         { text: 'Barcode skanerlash', included: true },
-        { text: 'Telegram xabarnoma', included: true },
-        { text: 'API kirish', included: true }
+        { text: 'Excel import', included: true },
+        { text: 'Rasm (AI) import', included: true },
       ]
     }
   ];
@@ -270,6 +326,7 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
   const currentLimits = PLAN_LIMITS[currentPlan] || PLAN_LIMITS.trial;
   const remainingDays = getRemainingDays();
   const trialExpired = isTrialExpired();
+  const planLabel = { trial: 'Sinov', starter: 'Boshlang\'ich', basic: 'Asosiy', pro: 'Professional' };
 
   if (loading) {
     return (
@@ -334,6 +391,7 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
         {[
           { id: 'general', label: 'Umumiy', icon: Building2 },
           { id: 'subscription', label: 'Tarif', icon: CreditCard },
+          { id: 'addons', label: 'Add-ons', icon: Plus },
           { id: 'stats', label: 'Statistika', icon: BarChart3 }
         ].map(tab => (
           <button
@@ -455,6 +513,49 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
             </div>
           </div>
 
+          {/* Obuna holati — debug info */}
+          {(() => {
+            const subEnd = company?.subscriptionEnd
+              ? (company.subscriptionEnd.seconds
+                  ? new Date(company.subscriptionEnd.seconds * 1000)
+                  : new Date(company.subscriptionEnd))
+              : null;
+            const trialEnd = company?.trialEndsAt
+              ? (company.trialEndsAt.seconds
+                  ? new Date(company.trialEndsAt.seconds * 1000)
+                  : new Date(company.trialEndsAt))
+              : null;
+            return (
+              <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-sm space-y-1">
+                <p className="font-semibold text-slate-700 mb-2">📋 Obuna holati:</p>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Tarif:</span>
+                  <span className="font-semibold text-slate-800">{company?.plan || '—'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-slate-500">Obuna tugash sanasi:</span>
+                  <span className={`font-semibold ${subEnd && subEnd > new Date() ? 'text-emerald-600' : subEnd ? 'text-rose-600' : 'text-slate-400'}`}>
+                    {subEnd ? subEnd.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Belgilanmagan'}
+                  </span>
+                </div>
+                {company?.plan === 'trial' && (
+                  <div className="flex justify-between">
+                    <span className="text-slate-500">Trial tugash sanasi:</span>
+                    <span className={`font-semibold ${trialEnd && trialEnd > new Date() ? 'text-emerald-600' : 'text-rose-600'}`}>
+                      {trialEnd ? trialEnd.toLocaleDateString('uz-UZ', { day: 'numeric', month: 'long', year: 'numeric' }) : '—'}
+                    </span>
+                  </div>
+                )}
+                {subEnd && subEnd > new Date() && (
+                  <div className="mt-2 flex items-center gap-2 text-emerald-700 font-medium">
+                    <CheckCircle className="w-4 h-4" />
+                    Obuna faol — banner xato ko'rsatilmoqda, sahifani yangilang (F5)
+                  </div>
+                )}
+              </div>
+            );
+          })()}
+
           {/* Available Plans */}
           <h3 className="text-lg font-bold text-slate-800">Mavjud tariflar</h3>
           <div className="grid gap-4 md:grid-cols-3">
@@ -498,11 +599,14 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
                       <li key={idx} className="flex items-center gap-2 text-sm">
                         {feature.included ? (
                           <CheckCircle className="flex-shrink-0 w-5 h-5 text-emerald-500" />
+                        ) : feature.addon ? (
+                          <Plus className="flex-shrink-0 w-5 h-5 text-indigo-400" />
                         ) : (
                           <div className="flex-shrink-0 w-5 h-5 border-2 rounded-full border-slate-300" />
                         )}
-                        <span className={feature.included ? 'text-slate-700' : 'text-slate-400'}>
+                        <span className={feature.included ? 'text-slate-700' : feature.addon ? 'text-indigo-500 font-medium' : 'text-slate-400'}>
                           {feature.text}
+                          {feature.addon && <span className="ml-1 text-xs bg-indigo-100 text-indigo-600 px-1.5 py-0.5 rounded-full">Add-on</span>}
                         </span>
                       </li>
                     ))}
@@ -565,6 +669,89 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
             <p className="mt-4 text-sm text-slate-500">
               To'lovni amalga oshirgandan so'ng, admin tomonidan tasdiqlanadi va tarif faollashadi.
             </p>
+          </div>
+        </div>
+      )}
+
+      {/* Add-ons Tab */}
+      {activeTab === 'addons' && (
+        <div className="space-y-6">
+          <div className="p-4 bg-blue-50 border border-blue-200 rounded-2xl text-sm text-blue-800">
+            <p className="font-semibold mb-1">Add-on nima?</p>
+            <p>Add-onlar orqali pastki tarifda ham yuqori tarifning ba'zi funksiyalarini oylik qo'shimcha to'lov evaziga faollashtirishingiz mumkin.</p>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            {ADDONS.map(addon => {
+              const isActive = (company?.addOns || {})[addon.id] === true;
+              const isIncluded = addon.notNeededFor.includes(currentPlan);
+              const isAvailable = addon.availableFor.includes(currentPlan);
+              const Icon = addon.icon;
+              const colorMap = {
+                emerald: { bg: 'bg-emerald-100', text: 'text-emerald-600', btn: 'bg-emerald-600 hover:bg-emerald-700', border: 'border-emerald-200' },
+                indigo: { bg: 'bg-indigo-100', text: 'text-indigo-600', btn: 'bg-indigo-600 hover:bg-indigo-700', border: 'border-indigo-200' },
+              };
+              const colors = colorMap[addon.color] || colorMap.emerald;
+
+              return (
+                <div key={addon.id} className={`bg-white rounded-2xl p-5 border-2 ${isActive ? colors.border : 'border-slate-200'} shadow-sm`}>
+                  <div className="flex items-start gap-4">
+                    <div className={`p-3 rounded-xl ${colors.bg}`}>
+                      <Icon className={`w-6 h-6 ${colors.text}`} />
+                    </div>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2 mb-1">
+                        <h4 className="font-bold text-slate-800">{addon.name}</h4>
+                        {isActive && (
+                          <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-xs font-bold rounded-full">Faol</span>
+                        )}
+                        {isIncluded && (
+                          <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-xs font-bold rounded-full">Tarifda bor</span>
+                        )}
+                      </div>
+                      <p className="text-sm text-slate-500 mb-3">{addon.description}</p>
+                      <p className="text-lg font-bold text-slate-800">{addon.price.toLocaleString()} <span className="text-sm font-normal text-slate-500">so'm/oy</span></p>
+                    </div>
+                  </div>
+
+                  <div className="mt-4">
+                    {isIncluded ? (
+                      <div className="flex items-center gap-2 text-sm text-blue-600 font-medium">
+                        <CheckCircle className="w-4 h-4" />
+                        Sizning {planLabel[currentPlan]} tarifingizga kiritilgan
+                      </div>
+                    ) : isActive ? (
+                      <div className="flex items-center gap-2 text-sm text-emerald-600 font-medium">
+                        <CheckCircle className="w-4 h-4" />
+                        Add-on faol (admin tomonidan)
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => {
+                          if (!isAvailable) {
+                            toast.info('Bu add-on sizning tarifingizda qo\'llanilmaydi.');
+                            return;
+                          }
+                          setSelectedAddon(addon);
+                          setShowAddonModal(true);
+                        }}
+                        disabled={!!pendingRequest}
+                        className={`w-full py-2.5 rounded-xl text-white font-semibold text-sm transition-all active:scale-[0.98] ${
+                          pendingRequest ? 'bg-slate-300 cursor-not-allowed' : `${colors.btn}`
+                        }`}
+                      >
+                        {pendingRequest ? 'So\'rov kutilmoqda' : 'Sotib olish'}
+                      </button>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl text-sm text-amber-800">
+            <p className="font-semibold mb-1">Eslatma:</p>
+            <p>Add-onni sotib olgandan so'ng to'lov chekini Telegram orqali yuboring. Admin tasdiqlashi bilan funksiya faollashadi.</p>
           </div>
         </div>
       )}
@@ -667,38 +854,51 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
               <label className="block mb-3 text-sm font-semibold text-slate-700">
                 Muddat tanlang:
               </label>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 gap-2">
                 {durations.map(d => {
                   const basePrice = selectedPlan.price * d.months;
                   const discountAmount = basePrice * (d.discount / 100);
                   const finalPrice = basePrice - discountAmount;
-                  
+                  const isSelected = selectedDuration === d.months;
+
                   return (
                     <button
                       key={d.months}
                       onClick={() => setSelectedDuration(d.months)}
-                      className={`p-4 rounded-xl border-2 text-left transition-all ${
-                        selectedDuration === d.months
+                      className={`px-4 py-3 rounded-xl border-2 text-left transition-all flex items-center justify-between gap-3 ${
+                        isSelected
                           ? 'border-emerald-500 bg-emerald-50'
-                          : 'border-slate-200 hover:border-slate-300'
+                          : 'border-slate-200 hover:border-emerald-300 hover:bg-emerald-50/30'
                       }`}
                     >
-                      <div className="flex items-start justify-between">
-                        <span className="font-bold">{d.label}</span>
+                      <div className="flex items-center gap-3 min-w-0">
+                        <div className={`w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center ${
+                          isSelected ? 'border-emerald-500 bg-emerald-500' : 'border-slate-300'
+                        }`}>
+                          {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                        </div>
+                        <span className="font-semibold text-slate-800">{d.label}</span>
                         {d.discount > 0 && (
-                          <span className="px-2 py-0.5 bg-rose-100 text-rose-600 text-xs font-bold rounded-full">
-                            -{d.discount}%
+                          <span className="px-2 py-0.5 bg-rose-100 text-rose-600 text-xs font-bold rounded-full flex-shrink-0">
+                            -{d.discount}% chegirma
+                          </span>
+                        )}
+                        {d.months === 12 && (
+                          <span className="px-2 py-0.5 bg-amber-100 text-amber-700 text-xs font-bold rounded-full flex-shrink-0">
+                            🏆 Eng foydali
                           </span>
                         )}
                       </div>
-                      <p className="mt-1 text-lg font-bold text-slate-800">
-                        {finalPrice.toLocaleString()} so'm
-                      </p>
-                      {d.discount > 0 && (
-                        <p className="text-xs line-through text-slate-400">
-                          {basePrice.toLocaleString()} so'm
+                      <div className="text-right flex-shrink-0">
+                        <p className="font-bold text-slate-800">
+                          {finalPrice.toLocaleString()} so'm
                         </p>
-                      )}
+                        {d.discount > 0 && (
+                          <p className="text-xs line-through text-slate-400">
+                            {basePrice.toLocaleString()}
+                          </p>
+                        )}
+                      </div>
                     </button>
                   );
                 })}
@@ -761,6 +961,49 @@ const CompanySettings = ({ currentUser, onPlanChange }) => {
                 onClick={submitPaymentRequest}
                 disabled={saving}
                 className="flex items-center justify-center flex-1 gap-2 py-3 font-semibold text-white bg-emerald-600 rounded-xl hover:bg-emerald-700 disabled:opacity-50"
+              >
+                <Send className="w-5 h-5" />
+                {saving ? 'Yuborilmoqda...' : 'So\'rov yuborish'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Add-on sotib olish modali */}
+      {showAddonModal && selectedAddon && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6">
+            <div className="flex items-center justify-between mb-5">
+              <h3 className="text-lg font-bold text-slate-800">Add-on sotib olish</h3>
+              <button onClick={() => { setShowAddonModal(false); setSelectedAddon(null); }} className="p-2 rounded-full hover:bg-slate-100">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            <div className="p-4 bg-slate-50 rounded-xl mb-5">
+              <div className="flex items-center gap-3 mb-3">
+                <selectedAddon.icon className="w-8 h-8 text-indigo-500" />
+                <div>
+                  <p className="font-bold text-slate-800">{selectedAddon.name}</p>
+                  <p className="text-sm text-slate-500">{selectedAddon.description}</p>
+                </div>
+              </div>
+              <div className="flex justify-between items-center pt-3 border-t border-slate-200">
+                <span className="text-slate-600">Oylik to'lov:</span>
+                <span className="text-xl font-bold text-slate-800">{selectedAddon.price.toLocaleString()} so'm</span>
+              </div>
+            </div>
+            <div className="flex gap-3">
+              <button
+                onClick={() => { setShowAddonModal(false); setSelectedAddon(null); }}
+                className="flex-1 py-3 font-semibold bg-slate-100 text-slate-700 rounded-xl hover:bg-slate-200"
+              >
+                Bekor qilish
+              </button>
+              <button
+                onClick={submitAddonRequest}
+                disabled={saving}
+                className="flex items-center justify-center flex-1 gap-2 py-3 font-semibold text-white bg-indigo-600 rounded-xl hover:bg-indigo-700 disabled:opacity-50"
               >
                 <Send className="w-5 h-5" />
                 {saving ? 'Yuborilmoqda...' : 'So\'rov yuborish'}

@@ -1,9 +1,11 @@
 import React, { useState, useMemo, useRef } from 'react';
-import { 
+import {
   Search, Calendar, Download, Printer, Eye, Filter,
   ChevronLeft, ChevronRight, Receipt, X, Phone, User,
-  Package, DollarSign, Clock, CreditCard, Banknote
+  Package, DollarSign, Clock, CreditCard, Banknote,
+  RotateCcw, FileText
 } from 'lucide-react';
+import { generateReceiptHTML } from './Settings';
 
 const Sales = ({ transactions, isAdmin, companyData }) => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -12,6 +14,22 @@ const Sales = ({ transactions, isAdmin, companyData }) => {
   const [selectedSale, setSelectedSale] = useState(null);
   const [showReceipt, setShowReceipt] = useState(false);
   const receiptRef = useRef(null);
+
+  // Sana filtri yordamchi funksiya
+  const isInDateRange = (date) => {
+    const d = date instanceof Date ? date : new Date(date);
+    if (dateRange.start) {
+      const start = new Date(dateRange.start);
+      start.setHours(0, 0, 0, 0);
+      if (d < start) return false;
+    }
+    if (dateRange.end) {
+      const end = new Date(dateRange.end);
+      end.setHours(23, 59, 59, 999);
+      if (d > end) return false;
+    }
+    return true;
+  };
 
   // Sotuvlar (chiqim)
   const sales = useMemo(() => {
@@ -23,6 +41,18 @@ const Sales = ({ transactions, isAdmin, companyData }) => {
         return dateB - dateA;
       });
   }, [transactions]);
+
+  // Qaytarishlar statistikasi
+  const returnsStats = useMemo(() => {
+    const filtered = transactions.filter(t => {
+      if (t.type !== 'qaytarish') return false;
+      return isInDateRange(t.date);
+    });
+    return {
+      count: filtered.length,
+      total: filtered.reduce((sum, t) => sum + (t.totalAmount || 0), 0)
+    };
+  }, [transactions, dateRange]);
 
   // Guruhlangan sotuvlar (saleId bo'yicha)
   const groupedSales = useMemo(() => {
@@ -91,109 +121,102 @@ const Sales = ({ transactions, isAdmin, companyData }) => {
     return { total, cash, card, debt, count: filteredSales.length };
   }, [filteredSales]);
 
-  // Chek chop etish
-  const printReceipt = () => {
-    if (!selectedSale) return;
-    
+  // Hisobotni chop etish (umumiy ro'yxat)
+  const printReport = () => {
     const printWindow = window.open('', '_blank');
-    const saleDate = selectedSale.date instanceof Date ? selectedSale.date : new Date(selectedSale.date);
-    
+    const today = new Date().toLocaleDateString('uz-UZ');
+    const periodLabel = dateRange.start && dateRange.end
+      ? `${dateRange.start} — ${dateRange.end}`
+      : dateRange.start ? `${dateRange.start} dan` : `Bugun ${today}`;
+
     printWindow.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
-        <title>Chek - ${selectedSale.saleId}</title>
+        <title>Hisobot</title>
         <style>
           * { margin: 0; padding: 0; box-sizing: border-box; }
-          body { 
-            font-family: 'Courier New', monospace; 
-            width: 80mm; 
-            padding: 5mm;
-            font-size: 12px;
-          }
-          .header { text-align: center; margin-bottom: 10px; border-bottom: 1px dashed #000; padding-bottom: 10px; }
-          .company-name { font-size: 18px; font-weight: bold; }
-          .receipt-info { margin: 10px 0; }
-          .items { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 10px 0; margin: 10px 0; }
-          .item { display: flex; justify-content: space-between; margin: 5px 0; }
-          .item-name { max-width: 60%; }
-          .totals { margin-top: 10px; }
-          .total-row { display: flex; justify-content: space-between; margin: 3px 0; }
-          .grand-total { font-size: 16px; font-weight: bold; border-top: 1px solid #000; padding-top: 5px; margin-top: 5px; }
-          .footer { text-align: center; margin-top: 15px; font-size: 10px; border-top: 1px dashed #000; padding-top: 10px; }
-          @media print {
-            body { width: 80mm; }
-          }
+          body { font-family: Arial, sans-serif; padding: 20px; font-size: 13px; color: #111; }
+          h1 { font-size: 20px; margin-bottom: 4px; }
+          .meta { color: #555; font-size: 12px; margin-bottom: 16px; }
+          .stats { display: flex; gap: 16px; margin-bottom: 20px; flex-wrap: wrap; }
+          .stat-box { border: 1px solid #ddd; padding: 10px 16px; border-radius: 8px; min-width: 130px; }
+          .stat-box .label { font-size: 11px; color: #666; }
+          .stat-box .value { font-size: 16px; font-weight: bold; margin-top: 2px; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th { background: #f1f5f9; text-align: left; padding: 8px 10px; border: 1px solid #e2e8f0; }
+          td { padding: 7px 10px; border: 1px solid #e2e8f0; }
+          tr:nth-child(even) td { background: #f8fafc; }
+          .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+          .naqd { background: #d1fae5; color: #065f46; }
+          .karta { background: #dbeafe; color: #1e40af; }
+          .qarz { background: #ffe4e6; color: #9f1239; }
+          .footer { margin-top: 24px; font-size: 11px; color: #888; border-top: 1px solid #e2e8f0; padding-top: 10px; }
+          @media print { body { padding: 8px; } }
         </style>
       </head>
       <body>
-        <div class="header">
-          <div class="company-name">${companyData?.name || 'Do\'kon'}</div>
-          ${companyData?.phone ? `<div>Tel: ${companyData.phone}</div>` : ''}
-          ${companyData?.address ? `<div>${companyData.address}</div>` : ''}
+        <h1>${companyData?.name || "Do'kon"} — Sotuvlar hisoboti</h1>
+        <div class="meta">Davr: ${periodLabel} &nbsp;|&nbsp; Chop etildi: ${today}</div>
+
+        <div class="stats">
+          <div class="stat-box"><div class="label">Jami sotuvlar</div><div class="value">${stats.count} ta</div></div>
+          <div class="stat-box"><div class="label">Jami summa</div><div class="value">${stats.total.toLocaleString()} so'm</div></div>
+          <div class="stat-box"><div class="label">Naqd</div><div class="value">${stats.cash.toLocaleString()} so'm</div></div>
+          <div class="stat-box"><div class="label">Karta</div><div class="value">${stats.card.toLocaleString()} so'm</div></div>
+          <div class="stat-box"><div class="label">Qarzga</div><div class="value" style="color:#e11d48">${stats.debt.toLocaleString()} so'm</div></div>
+          ${returnsStats.count > 0 ? `<div class="stat-box"><div class="label">Qaytarishlar</div><div class="value" style="color:#dc2626">${returnsStats.count} ta / ${returnsStats.total.toLocaleString()} so'm</div></div>` : ''}
         </div>
-        
-        <div class="receipt-info">
-          <div>Chek №: ${selectedSale.saleId}</div>
-          <div>Sana: ${saleDate.toLocaleDateString('uz-UZ')} ${saleDate.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</div>
-          <div>Kassir: ${selectedSale.items[0]?.createdBy || '-'}</div>
-          ${selectedSale.customerName && selectedSale.customerName !== 'Naqd mijoz' ? `<div>Mijoz: ${selectedSale.customerName}</div>` : ''}
-        </div>
-        
-        <div class="items">
-          ${selectedSale.items.map((item, idx) => `
-            <div class="item">
-              <span class="item-name">${idx + 1}. ${item.productName}</span>
-            </div>
-            <div class="item" style="padding-left: 15px;">
-              <span>${item.quantity} x ${(item.sellingPrice || item.price || 0).toLocaleString()}</span>
-              <span>${(item.totalAmount || item.quantity * item.price || 0).toLocaleString()}</span>
-            </div>
-          `).join('')}
-        </div>
-        
-        <div class="totals">
-          <div class="total-row">
-            <span>Jami:</span>
-            <span>${selectedSale.totalAmount.toLocaleString()} so'm</span>
-          </div>
-          ${selectedSale.discount > 0 ? `
-            <div class="total-row">
-              <span>Chegirma:</span>
-              <span>-${selectedSale.discount.toLocaleString()} so'm</span>
-            </div>
-          ` : ''}
-          <div class="total-row">
-            <span>To'lov turi:</span>
-            <span>${selectedSale.paymentType === 'naqd' ? 'Naqd' : selectedSale.paymentType === 'karta' ? 'Karta' : 'Qarz'}</span>
-          </div>
-          ${selectedSale.debt > 0 ? `
-            <div class="total-row" style="color: red;">
-              <span>Qarz:</span>
-              <span>${selectedSale.debt.toLocaleString()} so'm</span>
-            </div>
-          ` : ''}
-          <div class="total-row grand-total">
-            <span>JAMI:</span>
-            <span>${selectedSale.totalAmount.toLocaleString()} so'm</span>
-          </div>
-        </div>
-        
-        <div class="footer">
-          <div>Xaridingiz uchun rahmat!</div>
-          <div>Yana keling!</div>
-        </div>
-        
-        <script>
-          window.onload = function() {
-            window.print();
-            setTimeout(function() { window.close(); }, 500);
-          };
-        </script>
+
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Chek ID</th>
+              <th>Sana</th>
+              <th>Mijoz</th>
+              <th>Mahsulotlar</th>
+              <th>To'lov</th>
+              <th>Summa</th>
+              <th>Qarz</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${filteredSales.map((sale, idx) => {
+              const d = sale.date instanceof Date ? sale.date : new Date(sale.date);
+              return `<tr>
+                <td>${idx + 1}</td>
+                <td>#${sale.saleId?.slice(-8) || '-'}</td>
+                <td>${d.toLocaleDateString('uz-UZ')} ${d.toLocaleTimeString('uz-UZ', { hour: '2-digit', minute: '2-digit' })}</td>
+                <td>${sale.customerName && sale.customerName !== 'Naqd mijoz' ? sale.customerName : '-'}</td>
+                <td>${sale.items.map(i => i.productName).join(', ')}</td>
+                <td><span class="badge ${sale.paymentType}">${sale.paymentType === 'naqd' ? 'Naqd' : sale.paymentType === 'karta' ? 'Karta' : 'Qarz'}</span></td>
+                <td>${sale.totalAmount.toLocaleString()}</td>
+                <td>${sale.debt > 0 ? sale.debt.toLocaleString() : '-'}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+        <div class="footer">CRM Pro boshqaruv tizimi</div>
+        <script>window.onload = function() { window.print(); setTimeout(function() { window.close(); }, 500); };</script>
       </body>
       </html>
     `);
     printWindow.document.close();
+  };
+
+  // Chek chop etish
+  const printReceipt = (sale) => {
+    const target = sale || selectedSale;
+    if (!target) return;
+    const html = generateReceiptHTML({
+      sale: target,
+      companyData,
+      receiptSettings: companyData?.receiptSettings,
+    });
+    const w = window.open('', '_blank');
+    w.document.write(html);
+    w.document.close();
   };
 
   const formatSum = (value) => {
@@ -219,49 +242,67 @@ const Sales = ({ transactions, isAdmin, companyData }) => {
           <h1 className="text-2xl font-bold text-slate-800">Sotuvlar tarixi</h1>
           <p className="text-slate-500">Barcha sotuvlar ro'yxati</p>
         </div>
+        <button
+          onClick={printReport}
+          className="flex items-center gap-2 px-4 py-2.5 bg-slate-800 text-white rounded-xl hover:bg-slate-700 transition-colors text-sm font-medium"
+        >
+          <FileText className="w-4 h-4" />
+          Hisobotni chop etish
+        </button>
       </div>
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <div className="p-2 bg-emerald-100 rounded-xl">
-              <DollarSign className="w-5 h-5 text-emerald-600" />
+              <DollarSign className="w-4 h-4 text-emerald-600" />
             </div>
             <span className="text-xs text-slate-500">{stats.count} ta</span>
           </div>
-          <p className="text-slate-500 text-sm">Jami sotish</p>
-          <p className="text-xl font-bold text-slate-800">{formatSum(stats.total)}</p>
+          <p className="text-slate-500 text-xs">Jami sotish</p>
+          <p className="text-lg font-bold text-slate-800">{formatSum(stats.total)}</p>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <div className="p-2 bg-green-100 rounded-xl">
-              <Banknote className="w-5 h-5 text-green-600" />
+              <Banknote className="w-4 h-4 text-green-600" />
             </div>
           </div>
-          <p className="text-slate-500 text-sm">Naqd</p>
-          <p className="text-xl font-bold text-slate-800">{formatSum(stats.cash)}</p>
+          <p className="text-slate-500 text-xs">Naqd</p>
+          <p className="text-lg font-bold text-slate-800">{formatSum(stats.cash)}</p>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <div className="p-2 bg-blue-100 rounded-xl">
-              <CreditCard className="w-5 h-5 text-blue-600" />
+              <CreditCard className="w-4 h-4 text-blue-600" />
             </div>
           </div>
-          <p className="text-slate-500 text-sm">Karta</p>
-          <p className="text-xl font-bold text-slate-800">{formatSum(stats.card)}</p>
+          <p className="text-slate-500 text-xs">Karta</p>
+          <p className="text-lg font-bold text-slate-800">{formatSum(stats.card)}</p>
         </div>
 
-        <div className="bg-white rounded-2xl p-5 shadow-sm border border-slate-100">
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100">
           <div className="flex items-center justify-between mb-2">
             <div className="p-2 bg-rose-100 rounded-xl">
-              <Clock className="w-5 h-5 text-rose-600" />
+              <Clock className="w-4 h-4 text-rose-600" />
             </div>
           </div>
-          <p className="text-slate-500 text-sm">Qarzga</p>
-          <p className="text-xl font-bold text-rose-600">{formatSum(stats.debt)}</p>
+          <p className="text-slate-500 text-xs">Qarzga</p>
+          <p className="text-lg font-bold text-rose-600">{formatSum(stats.debt)}</p>
+        </div>
+
+        <div className="bg-white rounded-2xl p-4 shadow-sm border border-slate-100 col-span-2 lg:col-span-1 xl:col-span-2">
+          <div className="flex items-center justify-between mb-2">
+            <div className="p-2 bg-orange-100 rounded-xl">
+              <RotateCcw className="w-4 h-4 text-orange-600" />
+            </div>
+            <span className="text-xs text-slate-500">{returnsStats.count} ta</span>
+          </div>
+          <p className="text-slate-500 text-xs">Qaytarishlar</p>
+          <p className="text-lg font-bold text-orange-600">{formatSum(returnsStats.total)}</p>
         </div>
       </div>
 
@@ -396,10 +437,7 @@ const Sales = ({ transactions, isAdmin, companyData }) => {
                         <Eye className="w-5 h-5" />
                       </button>
                       <button
-                        onClick={() => {
-                          setSelectedSale(sale);
-                          setTimeout(printReceipt, 100);
-                        }}
+                        onClick={() => printReceipt(sale)}
                         className="p-2 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200 transition-colors"
                         title="Chop etish"
                       >
@@ -423,7 +461,7 @@ const Sales = ({ transactions, isAdmin, companyData }) => {
                 <h3 className="text-xl font-bold text-slate-800">Chek</h3>
                 <div className="flex gap-2">
                   <button
-                    onClick={printReceipt}
+                    onClick={() => printReceipt(selectedSale)}
                     className="p-2 bg-emerald-100 text-emerald-600 rounded-lg hover:bg-emerald-200"
                   >
                     <Printer className="w-5 h-5" />

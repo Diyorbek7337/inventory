@@ -1,7 +1,16 @@
 {
   "permissions": {
     "allow": [
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "Bash(npm install:*)",
+      "Bash(npm uninstall:*)",
+      "Bash(curl -s \"https://generativelanguage.googleapis.com/v1beta/models?key=AIzaSyDiegrUePCH820JWfYw8QbfDzRXLRnC3Ts\")",
+      "Bash(python3:*)",
+      "Bash(node:*)",
+      "Bash(npx vite:*)",
+      "Bash(npx firebase:*)",
+      "Bash(npx tsc:*)",
+      "Bash(firebase deploy:*)"
     ]
   }
 }

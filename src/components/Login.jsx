@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { 
   User, Lock, Building2, Phone, ChevronRight, Eye, EyeOff,
   Store, Pill, Shirt, Smartphone, Car, Utensils, Gift, MoreHorizontal,
   ShoppingBag, Hammer, Leaf, Baby, BookOpen, Dumbbell, Shield
 } from 'lucide-react';
-import { collection, addDoc, getDocs, query, where } from 'firebase/firestore';
+import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../firebase';
 import { toast } from 'react-toastify';
 import AuthService from '../utils/authService';
@@ -189,16 +189,21 @@ const Login = ({ onLogin }) => {
     const result = await AuthService.registerCompany(companyData, adminData);
 
     if (result.success) {
-      // Kategoriyalar qo'shish
-      const selectedStore = storeTypes.find(s => s.id === storeType);
-      if (selectedStore) {
-        for (const category of selectedStore.categories) {
-          await addDoc(collection(db, 'categories'), {
-            name: category,
-            companyId: result.company.id,
-            createdAt: new Date()
-          });
+      // Kategoriyalar qo'shish (xato bo'lsa ham ro'yxatdan o'tish muvaffaqiyatli)
+      try {
+        const selectedStore = storeTypes.find(s => s.id === storeType);
+        if (selectedStore && result.company?.id) {
+          for (const category of selectedStore.categories) {
+            await addDoc(collection(db, 'categories'), {
+              name: category,
+              companyId: result.company.id,
+              createdAt: new Date()
+            });
+          }
         }
+      } catch (catErr) {
+        console.warn('Kategoriyalar qo\'shishda xato (kritik emas):', catErr.message);
+        // Kategoriya xatosi ro'yxatdan o'tishni to'xtatmaydi
       }
 
       toast.success('🎉 Ro\'yxatdan o\'tdingiz! 14 kunlik sinov davri boshlandi.');
